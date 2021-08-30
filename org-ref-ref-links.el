@@ -149,7 +149,7 @@ Opens a hydra menu."
       (widen)
       (goto-char (point-min))
       (catch 'found
-	(while (re-search-forward rx)
+	(while (re-search-forward rx nil t)
 	  (when (string= label (match-string-no-properties 1))
 	    (save-match-data (org-mark-ring-push))
 	    (goto-char (match-beginning 1))
