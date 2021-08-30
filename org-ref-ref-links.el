@@ -489,6 +489,7 @@ the first instance of the label, or nil of there is none."
 	 el)))
 
 
+;;;###autoload
 (defun org-ref-insert-ref-link (&optional set-type)
   "Insert a ref link.
 If on a link, append a label to the end."
