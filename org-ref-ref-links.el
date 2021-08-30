@@ -22,6 +22,8 @@
 ;;
 
 ;;; Code:
+(require 'org)
+
 (defcustom org-ref-default-ref-type "ref"
   "Default ref link type to use when inserting ref links"
   :type 'string
