@@ -39,7 +39,6 @@
 (defvar url-http-end-of-headers)
 (declare-function org-ref-find-bibliography "org-ref-core")
 (declare-function org-ref-clean-bibtex-entry "org-ref-core")
-(declare-function reftex-get-bib-field "reftex-cite")
 (declare-function bibtex-completion-edit-notes "bibtex-completion")
 (declare-function org-bibtex-yank "org-bibtex")
 (declare-function org-ref-possible-bibfiles "org-ref-core")
@@ -999,13 +998,7 @@ Also cleans entry using ‘org-ref’, and tries to download the corresponding p
       (bibtex-set-field doi-utils-timestamp-field
 			ts)))
   (org-ref-clean-bibtex-entry)
-  (save-buffer)
-
-  ;; try to get pdf
-  (when doi-utils-download-pdf
-    (if doi-utils-async-download
-	(doi-utils-async-download-pdf)
-      (doi-utils-get-bibtex-entry-pdf))))
+  (save-buffer))
 
 
 ;;;###autoload
@@ -1416,8 +1409,8 @@ Get a list of possible matches. Choose one with completion."
 	 (raw-json-string)
          (json-string)
          (json-data)
-         (doi))
-    (unless (string= ""(reftex-get-bib-field "doi" entry))
+         (doi (bibtex-autokey-get-field "doi")))
+    (unless (string= "" doi)
       (error "Entry already has a doi field"))
 
     (with-current-buffer
@@ -1453,7 +1446,7 @@ Get a list of possible matches. Choose one with completion."
       (backward-char)
       ;; crossref returns doi url, but I prefer only a doi for the doi field
       (insert (replace-regexp-in-string "^https?://\\(dx.\\)?doi.org/" "" doi))
-      (when (string= "" (reftex-get-bib-field "url" entry))
+      (when (string= "" (bibtex-autokey-get-field "url"))
         (bibtex-make-field "url" t)
         (backward-char)
         (insert doi)))))

@@ -68,7 +68,6 @@
 (require 'doi-utils)
 
 
-(declare-function reftex-get-bib-field "reftex-cite")
 (declare-function key-chord-define-global "key-chord")
 (declare-function org-ref-find-bibliography "org-ref-core")
 (declare-function org-ref-open-bibtex-pdf "org-ref-core")
@@ -139,7 +138,8 @@ The default behavior is to remove : from the key."
     orcb-clean-pages
     orcb-check-journal
     org-ref-sort-bibtex-entry
-    orcb-fix-spacing)
+    orcb-fix-spacing
+    orcb-download-pdf)
   "Hook that is run in `org-ref-clean-bibtex-entry'.
 The functions should have no arguments, and
 operate on the bibtex entry at point. You can assume point starts
@@ -673,7 +673,7 @@ N is a prefix argument.  If it is numeric, jump that many entries back."
     (let ((entry (bibtex-parse-entry t)))
       (when (null entry)
 	(error "Unable to parse this bibtex entry."))
-      (reftex-get-bib-field "doi" entry))))
+      (cdr (assoc "doi" entry)))))
 
 ;; function that ensures that the url field of a bibtex entry is the
 ;; properly-formatted hyperlink of the DOI. See
@@ -683,11 +683,13 @@ N is a prefix argument.  If it is numeric, jump that many entries back."
 (defun org-ref-bibtex-format-url-if-doi ()
   "Hook function to format url to follow the current DOI conventions."
   (interactive)
-  (if (eq (org-ref-bibtex-entry-doi) "") nil
-    (let ((front-url "https://doi.org/")
-          (doi (org-ref-bibtex-entry-doi)))
-      (bibtex-set-field "url"
-                        (concat front-url doi)))))
+  ;; Don't overwrite an existing url field though.
+  (unless (bibtex-autokey-get-field "url")
+    (if (eq (org-ref-bibtex-entry-doi) "") nil
+      (let ((front-url "https://doi.org/")
+            (doi (org-ref-bibtex-entry-doi)))
+	(bibtex-set-field "url"
+                          (concat front-url doi))))))
 
 
 ;;;###autoload
@@ -729,7 +731,7 @@ there is a DOI."
      (if (string= "" doi)
 	 (save-excursion
 	   (bibtex-beginning-of-entry)
-	   (reftex-get-bib-field "title" (bibtex-parse-entry t)))
+	   (cdr (assoc "title" (bibtex-parse-entry t))))
        doi))))
 
 
@@ -778,7 +780,7 @@ a directory. Optional PREFIX argument toggles between
     (let* ((file (read-file-name "Select file associated with entry: "))
 	   (bibtex-expand-strings t)
            (entry (bibtex-parse-entry t))
-           (key (reftex-get-bib-field "=key=" entry))
+           (key (cdr (assoc "=key=" entry)))
 	   (file-move-func (org-ref-bibtex-get-file-move-func prefix))
 	   pdf)
       (if (bibtex-completion-find-pdf-in-library key)
@@ -926,7 +928,7 @@ a directory. Optional PREFIX argument toggles between
   "Email current bibtex entry at point and pdf if it exists."
   (interactive)
   (bibtex-beginning-of-entry)
-  (let* ((key (reftex-get-bib-field "=key=" (bibtex-parse-entry t)))
+  (let* ((key (cdr (assoc "=key=" (bibtex-parse-entry t))))
 	 (pdfs (bibtex-completion-find-pdf key)))
 
     (bibtex-copy-entry-as-kill)
@@ -1218,15 +1220,17 @@ will leave the empty entries so that you may fill them in later."
 
 
 (defun orcb-clean-doi ()
-  "Remove http://dx.doi.org/ in the doi field."
+  "Remove http://dx.doi.org/ or https://doi.org in the doi field."
   (let ((doi (bibtex-autokey-get-field "doi")))
-    (when (string-match "^http://dx.doi.org/" doi)
+    (when (or (string-match "^http://dx.doi.org/" doi)
+	      (string-match "^https://doi.org/" doi))
+      (setq doi (replace-match "" nil nil doi))
       (bibtex-beginning-of-entry)
       (goto-char (car (cdr (bibtex-search-forward-field "doi" t))))
       (bibtex-kill-field)
       (bibtex-make-field "doi")
       (backward-char)
-      (insert (replace-regexp-in-string "^http://dx.doi.org/" "" doi)))))
+      (insert doi))))
 
 
 (defun orcb-clean-year (&optional new-year)
@@ -1326,9 +1330,9 @@ If not, issue a warning."
     (save-excursion
       (bibtex-beginning-of-entry)
       (let* ((entry (bibtex-parse-entry t))
-             (journal (reftex-get-bib-field "journal" entry)))
+             (journal (cdr (assoc "=journal" entry))))
         (when (null journal)
-          (error "Unable to get journal for this entry."))
+          (warn "Unable to get journal for this entry."))
         (unless (member journal (-flatten org-ref-bibtex-journal-abbreviations))
           (message "Journal \"%s\" not found in org-ref-bibtex-journal-abbreviations." journal))))))
 
@@ -1359,6 +1363,15 @@ If not, issue a warning."
 	(when (looking-at "[}][ \t]*\\|@Comment.+\\|%.+")
 	  (end-of-line)
 	  (newline))))))
+
+
+(defun orcb-download-pdf ()
+  "Try to get the pdf in an entry."
+  ;; try to get pdf
+  (when doi-utils-download-pdf
+    (if doi-utils-async-download
+	(doi-utils-async-download-pdf)
+      (doi-utils-get-bibtex-entry-pdf))))
 
 
 ;;;###autoload

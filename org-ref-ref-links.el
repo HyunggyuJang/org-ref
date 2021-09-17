@@ -128,7 +128,14 @@ font-lock."
   "Jump to the target for the ref link at point."
   (interactive)
   (let ((label (get-text-property (point) 'org-ref-ref-label))
+	(labels (split-string _path ","))
 	(rx (string-join org-ref-ref-label-regexps "\\|")))
+    (when (null label)
+      (pcase (length labels)
+	(1
+	 (setq label (cl-first labels)))
+	(_
+	 (setq label (completing-read "Label: " labels)))))
     (when label
       (org-mark-ring-push)
       (widen)
@@ -278,7 +285,7 @@ This is meant to be used with `apply-partially' in the link definitions."
 
     (when label
       (cl-loop for reftype in org-ref-ref-types do
-	       (org-store-link-props
+	       (org-link-store-props
 		:type reftype
 		:link (concat reftype ":" label)))
       (format (concat  org-ref-default-ref-type ":" label)))))
@@ -492,6 +499,8 @@ If on a link, append a label to the end."
 
       (insert (format  "%s:%s" type label)))
     (goto-char (org-element-property :end (org-element-context)))))
+
+
 
 (provide 'org-ref-ref-links)
 
