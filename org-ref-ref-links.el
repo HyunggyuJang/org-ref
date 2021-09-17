@@ -29,12 +29,6 @@
   :type 'string
   :group 'org-ref)
 
-
-(defface org-ref-ref-face
-  `((t (:inherit org-link :foreground "dark red")))
-  "Face for ref links in org-ref.")
-
-
 (defvar org-ref-label-re
   (rx (group-n 1 (one-or-more (any word "-.:?!`'/*@+|(){}<>&_^$#%&~"))))
   "Regexp for labels.")
@@ -304,7 +298,7 @@ This is meant to be used with `apply-partially' in the link definitions."
 			 :activate-func #'org-ref-ref-activate
 			 :follow #'org-ref-ref-jump-to
 			 :export (apply-partially #'org-ref-ref-export "ref")
-			 :face 'org-ref-ref-face
+			 :face 'org-link
 			 :help-echo #'org-ref-ref-help-echo)
 
 
@@ -316,7 +310,7 @@ This is meant to be used with `apply-partially' in the link definitions."
 			 :activate-func #'org-ref-ref-activate
 			 :follow #'org-ref-ref-jump-to
 			 :export (apply-partially #'org-ref-ref-export "pageref")
-			 :face 'org-ref-ref-face
+			 :face 'org-link
 			 :complete (lambda (&optional arg) (org-ref-complete-link arg "pageref"))
 			 :help-echo #'org-ref-ref-help-echo)
 
@@ -329,7 +323,7 @@ This is meant to be used with `apply-partially' in the link definitions."
 			 :activate-func #'org-ref-ref-activate
 			 :follow #'org-ref-ref-jump-to
 			 :export (apply-partially #'org-ref-ref-export "nameref")
-			 :face 'org-ref-ref-face
+			 :face 'org-link
 			 :help-echo #'org-ref-ref-help-echo)
 
 ;;** eqref link
@@ -340,7 +334,7 @@ This is meant to be used with `apply-partially' in the link definitions."
 			 :activate-func #'org-ref-ref-activate
 			 :follow #'org-ref-ref-jump-to
 			 :export (apply-partially #'org-ref-ref-export "eqref")
-			 :face 'org-ref-ref-face
+			 :face 'org-link
 			 :help-echo #'org-ref-ref-help-echo)
 
 ;;** autoref link
@@ -351,7 +345,7 @@ This is meant to be used with `apply-partially' in the link definitions."
 			 :activate-func #'org-ref-ref-activate
 			 :follow #'org-ref-ref-jump-to
 			 :export (apply-partially #'org-ref-ref-export "autoref")
-			 :face 'org-ref-ref-face
+			 :face 'org-link
 			 :help-echo #'org-ref-ref-help-echo)
 
 ;;** cref link
@@ -365,7 +359,7 @@ This is meant to be used with `apply-partially' in the link definitions."
 			 :activate-func #'org-ref-ref-activate
 			 :follow #'org-ref-ref-jump-to
 			 :export (apply-partially #'org-ref-ref-export "cref")
-			 :face 'org-ref-ref-face
+			 :face 'org-link
 			 :help-echo #'org-ref-ref-help-echo)
 
 
@@ -375,7 +369,7 @@ This is meant to be used with `apply-partially' in the link definitions."
 			 :activate-func #'org-ref-ref-activate
 			 :follow #'org-ref-ref-jump-to
 			 :export (apply-partially #'org-ref-ref-export "Cref")
-			 :face 'org-ref-ref-face
+			 :face 'org-link
 			 :help-echo #'org-ref-ref-help-echo)
 
 
@@ -406,7 +400,7 @@ This is meant to be used with `apply-partially' in the link definitions."
 			 :activate-func #'org-ref-ref-activate
 			 :follow #'org-ref-ref-jump-to
 			 :export #'org-ref-crefrange-export
-			 :face 'org-ref-ref-face
+			 :face 'org-link
 			 :help-echo #'org-ref-ref-help-echo)
 
 
@@ -415,7 +409,7 @@ This is meant to be used with `apply-partially' in the link definitions."
 			 :activate-func #'org-ref-ref-activate
 			 :follow #'org-ref-ref-jump-to
 			 :export #'org-ref-Crefrange-export
-			 :face 'org-ref-ref-face
+			 :face 'org-link
 			 :help-echo #'org-ref-ref-help-echo)
 
 
