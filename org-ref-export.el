@@ -1,4 +1,4 @@
-;;; org-ref-export.el --- org-ref-export library
+;;; org-ref-export.el --- org-ref-export library -*- lexical-binding: t; -*-
 ;;
 ;; Copyright (C) 2021  John Kitchin
 
@@ -26,23 +26,25 @@
 ;;
 ;; The default style is set by a CSL-STYLE keyword or
 ;; `org-ref-csl-default-style'. If this is an absolute or relative path that
-;; exists, it is used. Otherwise, it looks in `org-cite-csl-styles-dir' if it is
-;; defined, and in the csl-styles directory in `org-ref' otherwise.
+;; exists, it is used. Otherwise, it looks in `org-cite-csl-styles-dir' from
+;; `org-cite' if it is defined, and in the citeproc/csl-styles directory in
+;; `org-ref' otherwise.
 ;;
 ;; The default locale is set by a CSL-LOCALE keyword or
 ;; `org-ref-csl-default-locale'. This is looked for in
 ;; `org-cite-csl-locales-dir' if it is defined, and otherwise in the csl-locales
 ;; directory of `org-ref'.
 ;;
-;; Note that citeproc does not do anything for cross-references, so if non-latex
-;; export is your goal, you should be careful in how you do cross-references,
-;; and rely exclusively on org-syntax for that, e.g. radio targets and fuzzy
-;; links.
+;; Note that citeproc does not do anything for cross-references, so if non-LaTeX
+;; export is your goal, you may want to use org-ref-refproc.el to handle
+;; cross-references.
 ;;
-;; TODO: write refproc to take care of cross-references? Should it just revert
-;; to org-markup, maybe adding parentheses around equation refs?
 
 ;;; Code:
+(eval-when-compile
+  (require 'hydra))
+
+(defvar hfy-user-sheet-assoc)  		; to quiet compiler
 
 (require 'ox-org)
 
@@ -52,24 +54,34 @@
   '((html . html)
     (latex . latex)
     (md . plain)
+    (org . org)
     (ascii . plain)
     (odt . org-odt))
-  "Mapping of export backend to csl-backends.")
+  "Mapping of export backend to csl-backends."
+  :type '(alist :key-type (symbol) :value-type (symbol))
+  :group 'org-ref)
 
 
 (defcustom org-ref-cite-internal-links 'auto
   "Should be on of
 - 'bib-links :: link cites to bibliography entries
 - 'no-links :: do not link cites to bibliography entries
-- nil or 'auto :: add links based on the style.")
+- nil or 'auto :: add links based on the style."
+  :type '(choice bib-links no-links auto nil)
+  :group 'org-ref)
 
 
 (defcustom org-ref-csl-default-style "chicago-author-date-16th-edition.csl"
-  "Default csl style to use.")
+  "Default csl style to use.
+Should be a csl filename, or an absolute path to a csl filename."
+  :type 'string
+  :group 'org-ref)
 
 
 (defcustom org-ref-csl-default-locale "en-US"
-  "Default csl locale to use.")
+  "Default csl locale to use."
+  :type 'string
+  :group 'org-ref)
 
 
 (defcustom org-ref-csl-label-aliases
@@ -103,7 +115,9 @@
   "A-list of aliases for a csl label.
 The car is a list of possible aliases (including if they end in a .
 This list was adapted from `org-cite-csl--label-alist'.
-See https://github.com/citation-style-language/documentation/blob/master/specification.rst#locators")
+See https://github.com/citation-style-language/documentation/blob/master/specification.rst#locators"
+  :type '(alist :key-type (list (repeat string)) :value-type string)
+  :group 'org-ref)
 
 
 (defun org-ref-dealias-label (alias)
@@ -125,7 +139,7 @@ actually done in oc-csl too, although it uses a flat a-list."
   "Return list of cite links in the order they appear in the buffer."
   (org-element-map (org-element-parse-buffer) 'link
     (lambda (lnk)
-      (when (member (org-element-property :type lnk) org-ref-cite-types)
+      (when (assoc (org-element-property :type lnk) org-ref-cite-types)
 	lnk))))
 
 
@@ -133,32 +147,56 @@ actually done in oc-csl too, although it uses a flat a-list."
   "Return the CSL alist for a REF of TYPE.
 REF is a plist data structure returned from `org-ref-parse-cite-path'."
   ;; I believe the suffix contains "label locator suffix"
-  ;; where locator is a number
+  ;; where locator is a number, or maybe a range of numbers like 5-6.
   ;; label is something like page or chapter
   ;; and the rest is the suffix text.
   ;; For example: ch. 5, for example
   ;; would be label = ch., locator=5, ",for example" as suffix.
-  (let* ((full-suffix (or (plist-get ref :suffix) ""))
-	 location label locator suffix)
-    (string-match "\\(?1:[^[:digit:]]*\\)?\\(?2:[[:digit:]]*\\)?\\(?3:.*\\)"
-		  full-suffix)
-    (if (not (string= "" (match-string 2 full-suffix)))
+  (let* ((full-suffix (string-trim (or (plist-get ref :suffix) ""))) 
+	 locator
+	 label locator suffix)
+
+    ;; org-cite is more sophisticated than this and would allow things like 5, 6
+    ;; and 12. I am not sure about what all should be supported yet. I guess the
+    ;; idea there is you use everything from the first to last number as the
+    ;; locator, but that seems tricky, what about something like: 5, 6 and 12,
+    ;; because he had 3 books. One solution might be some kind of delimiter,
+    ;; e.g. {5, 6 and 12}, because he had 3 books.
+
+    (if (and (string-match
+	      (rx
+	       ;; optional label
+	       (group-n 1 (optional
+			   (regexp (regexp-opt (cl-loop for (abbrvs . full)
+							in org-ref-csl-label-aliases
+							append (append abbrvs (list full)))))))
+	       (optional (one-or-more space))
+	       ;; number or numeric ranges
+	       (group-n 2 (one-or-more digit) (optional "-" (one-or-more digit)))
+	       ;; everything else
+	       (group-n 3 (* ".")))
+	      full-suffix)
+	     (match-string 2 full-suffix)
+	     (not (string= "" (match-string 2 full-suffix)))) 
 	;; We found a locator
 	(setq label (match-string 1 full-suffix)
 	      locator (match-string 2 full-suffix)
 	      suffix (match-string 3 full-suffix))
-      (setq label ""
-	    locator ""
+      (setq label nil
+	    locator nil
 	    suffix full-suffix))
+    
     ;; Let's assume if you have a locator but not a label that you mean page.
     (when (and locator (string= "" (string-trim label)))
       (setq label "page"))
+    
     `((id . ,(plist-get ref :key))
-      (prefix . ,(or (plist-get ref :prefix) ""))
+      (prefix . ,(plist-get ref :prefix))
       (suffix . ,suffix)
       (locator . ,locator)
-      (label . ,(org-ref-dealias-label (string-trim label)))
-      ;; TODO: proof of concept and not complete
+      (label . ,(when label (org-ref-dealias-label (string-trim label))))
+      ;; TODO: proof of concept and not complete. I did not go through all the
+      ;; types to see what else should be in here.
       (suppress-author . ,(not (null (member type
 					     '("citenum"
 					       "citeyear"
@@ -169,6 +207,7 @@ REF is a plist data structure returned from `org-ref-parse-cite-path'."
 					       "citetitle*"
 					       "citeurl"))))))))
 
+(declare-function org-ref-find-bibliography "org-ref-core")
 
 (defun org-ref-process-buffer (backend)
   "Process the citations and bibliography in the org-buffer.
@@ -195,11 +234,14 @@ BACKEND is the org export backend."
 		       (file-exists-p (f-join org-cite-csl-styles-dir style)))
 		  (f-join org-cite-csl-styles-dir style))
 		 ;; provided by org-ref
-		 ((file-exists-p (expand-file-name style (f-join (file-name-directory
-								  (locate-library "org-ref"))
-								 "csl-styles")))
-		  (expand-file-name style (f-join (file-name-directory (locate-library "org-ref"))
-						  "csl-styles")))
+		 ((file-exists-p (expand-file-name style
+						   (f-join (file-name-directory
+							    (locate-library "org-ref"))
+							   "citeproc/csl-styles")))
+		  (expand-file-name style (f-join
+					   (file-name-directory
+					    (locate-library "org-ref"))
+					   "citeproc/csl-styles")))
 		 (t
 		  (error "%s not found" style)))
 		;; item-getter
@@ -211,14 +253,14 @@ BACKEND is the org export backend."
 						  (t
 						   (f-join (file-name-directory
 							    (locate-library "org-ref"))
-							   "csl-locales"))))
+							   "citeproc/csl-locales"))))
 		;; the actual locale
 		locale))
 
 	 ;; list of links in the buffer
 	 (cite-links (org-element-map (org-element-parse-buffer) 'link
 		       (lambda (lnk)
-			 (when (member (org-element-property :type lnk) org-ref-cite-types)
+			 (when (assoc (org-element-property :type lnk) org-ref-cite-types)
 			   lnk))))
 
 	 (cites (cl-loop for cl in cite-links collect
@@ -232,64 +274,59 @@ BACKEND is the org export backend."
 						(org-ref-ref-csl-data ref type))))
 			   ;; TODO: update eventually
 			   ;; https://github.com/andras-simonyi/citeproc-el/issues/46
-			   ;; To handle common prefixes, suffixes, I just concat them with the first/last entries.
-			   ;; That is all that is supported for now.
-			   ;; Combine common/local prefix
+			   ;; To handle common prefixes, suffixes, I just concat
+			   ;; them with the first/last entries. That is all that
+			   ;; is supported for now. Combine common/local prefix
 			   (setf (cdr (assoc 'prefix (cl-first cites)))
-				 (concat common-prefix (cdr (assoc 'prefix (cl-first cites)))))
+				 (concat common-prefix
+					 (cdr (assoc 'prefix (cl-first cites)))))
 			   ;; Combine local/common suffix
 			   (setf (cdr (assoc 'suffix (car (last cites))))
-				 (concat (cdr (assoc 'suffix (car (last cites)))) common-suffix))
+				 (concat (cdr (assoc 'suffix (car (last cites))))
+					 common-suffix))
 
 			   ;; https://github.com/andras-simonyi/citeproc-el#creating-citation-structures
-			   (citeproc-citation-create :cites
-						     ;; Weird, I used to have to
-						     ;; reverse this to get the
-						     ;; right order, but now it
-						     ;; seems I don't. I wonder
-						     ;; if it is another
-						     ;; generalized variable
-						     ;; leakage?
-						     cites
-						     ;; TODO: proof of concept, incomplete
-						     ;; if this is true, the citation is not parenthetical
-						     :suppress-affixes (let ((type (org-element-property :type cl)))
-									 (when (member type '("citet"
-											      "citet*"
-											      "citenum"))
-									   t))
+			   (citeproc-citation-create
+			    :cites cites
+			    ;; TODO: proof of concept, incomplete if this is
+			    ;; true, the citation is not parenthetical
+			    :suppress-affixes (let ((type (org-element-property :type cl)))
+						(when (member type '("citet"
+								     "citet*"
+								     "citenum"))
+						  t))
 
-						     ;; TODO: this is proof of
-						     ;; concept, and not
-						     ;; complete mode is one of
-						     ;; suppress-author,
-						     ;; textual, author-only,
-						     ;; year-only, or nil for
-						     ;; default. These are not
-						     ;; all clear to me.
-						     :mode (let ((type (org-element-property :type cl)))
-							     (cond
-							      ((member type '("citet" "citet*"))
-							       'textual)
-							      ((member type '("citeauthor" "citeauthor*"))
-							       'author-only)
-							      ((member type '("citeyear" "citeyear*"))
-							       'year-only)
-							      ((member type '("citedate" "citedate*"))
-							       'suppress-author)
-							      (t
-							       nil)))
+			    ;; TODO: this is proof of concept, and not complete.
+			    ;; mode is one of suppress-author, textual,
+			    ;; author-only, year-only, or nil for default. These
+			    ;; are not all clear to me.
+			    :mode (let ((type (org-element-property :type cl)))
+				    (cond
+				     ((member type '("citet" "citet*"))
+				      'textual)
+				     ((member type '("citeauthor" "citeauthor*"))
+				      'author-only)
+				     ((member type '("citeyear" "citeyear*"))
+				      'year-only)
+				     ((member type '("citedate" "citedate*"))
+				      'suppress-author)
+				     (t
+				      nil)))
 
-						     ;; I think the capitalized styles are what this is for
-						     :capitalize-first (string-match
-									"[A-Z]"
-									(substring (org-element-property :type cl) 0 1))
-						     ;; I don't know where this information would come from.
-						     :note-index nil
-						     :ignore-et-al nil))))
+			    ;; I think the capitalized styles are what this is for
+			    :capitalize-first (string-match
+					       "[A-Z]"
+					       (substring
+						(org-element-property :type cl) 0 1))
+			    ;; I don't know where this information would come from.
+			    :note-index nil
+			    :ignore-et-al nil))))
 
 	 (rendered-citations (progn (citeproc-append-citations cites proc)
 				    (citeproc-render-citations proc csl-backend org-ref-cite-internal-links)))
+	 ;; I only use the returned bibliography string. citeproc returns a
+	 ;; bunch of other things related to offsets and linespacing, but I
+	 ;; don't know what you do with these, so just ignore them here.
 	 (rendered-bib (car (citeproc-render-bib proc csl-backend)))
 	 ;; The idea is we will wrap each citation and the bibliography in
 	 ;; org-code so it exports appropriately.
@@ -304,11 +341,17 @@ BACKEND is the org export backend."
     (cl-loop for cl in (reverse cite-links) for rc in (reverse rendered-citations) do
 	     (cl--set-buffer-substring (org-element-property :begin cl)
 				       (org-element-property :end cl)
-				       (format (or (cdr (assoc backend cite-formatters)) "%s")
+				       (format (or
+						(cdr (assoc backend cite-formatters))
+						"%s")
 					       (concat
 						rc
-						;; Add on extra spaces that were following it.
-						(make-string (or (org-element-property :post-blank cl) 0) ? )))))
+						;; Add on extra spaces that were
+						;; following it.
+						(make-string
+						 (or
+						  (org-element-property :post-blank cl) 0)
+						 ? )))))
 
     ;; replace the bibliography
     (org-element-map (org-element-parse-buffer) 'link
@@ -317,11 +360,22 @@ BACKEND is the org export backend."
 	 ((string= (org-element-property :type lnk) "bibliography")
 	  (cl--set-buffer-substring (org-element-property :begin lnk)
 				    (org-element-property :end lnk)
-				    (format (or (cdr (assoc backend bib-formatters)) "%s") rendered-bib)))
+				    (format (or
+					     (cdr (assoc backend bib-formatters))
+					     "%s")
+					    rendered-bib)))
+	 ;; We just get rid of nobibliography links.
 	 ((string= (org-element-property :type lnk) "nobibliography")
 	  (cl--set-buffer-substring (org-element-property :begin lnk)
 				    (org-element-property :end lnk)
-				    "")))))))
+				    "")))))
+    ;; For LaTeX we need to define the citeprocitem commands
+    ;; see https://www.mail-archive.com/emacs-orgmode@gnu.org/msg138546.html
+    (when (eq backend 'latex)
+      (goto-char (point-min))
+      (insert "#+latex_header: \\makeatletter
+#+latex_header: \\newcommand{\\citeprocitem}[2]{\\hyper@linkstart{cite}{citeproc_bib_item_#1}#2\\hyper@linkend}
+#+latex_header: \\makeatother\n"))))
 
 
 (defun org-ref-export-to (backend &optional async subtreep visible-only
@@ -373,6 +427,16 @@ VISIBLE-ONLY BODY-ONLY and INFO."
 		     body-only info))
 
 
+(defun org-ref-export-to-pdf (&optional async subtreep visible-only
+					body-only info)
+  "Export the buffer to PDF via LaTeX and open.
+See `org-export-as' for the meaning of ASYNC SUBTREEP
+VISIBLE-ONLY BODY-ONLY and INFO."
+  (let ((org-export-before-parsing-hook '(org-ref-csl-preprocess-buffer)))
+    (org-open-file (org-latex-export-to-pdf async subtreep visible-only
+					body-only info))))
+
+
 (defun org-ref-export-to-latex (&optional async subtreep visible-only
 					  body-only info)
   "Export the buffer to LaTeX and open.
@@ -393,7 +457,7 @@ VISIBLE-ONLY BODY-ONLY and INFO."
 		     body-only info))
 
 
-(defun org-ref-export-as-org (&optional async subtreep visible-only
+(defun org-ref-export-as-org (&optional _async subtreep visible-only
 					body-only info)
   "Export the buffer to an ORG buffer and open.
 We only make a buffer here to avoid overwriting the original file.
@@ -404,7 +468,7 @@ VISIBLE-ONLY BODY-ONLY and INFO."
 
     (org-export-with-buffer-copy
      (org-ref-process-buffer 'org)
-     (setq export (org-export-as 'org))
+     (setq export (org-export-as 'org subtreep visible-only body-only info))
      (with-current-buffer (get-buffer-create export-buf)
        (erase-buffer)
        (org-mode)
@@ -412,13 +476,14 @@ VISIBLE-ONLY BODY-ONLY and INFO."
     (pop-to-buffer export-buf)))
 
 
-(defun org-ref-export-to-message (&optional async subtreep visible-only
+(defun org-ref-export-to-message (&optional _async subtreep visible-only
 					    body-only info)
   "Export to ascii and insert in an email message."
   (let* ((backend 'ascii)
 	 (content (org-export-with-buffer-copy
 		   (org-ref-process-buffer backend)
-		   (org-export-as backend))))
+		   (org-export-as backend subtreep visible-only
+				  body-only info))))
     (compose-mail)
     (message-goto-body)
     (insert content)
@@ -431,7 +496,8 @@ VISIBLE-ONLY BODY-ONLY and INFO."
        ((?a "to Ascii" org-ref-export-to-ascii)
 	(?h "to html" org-ref-export-to-html)
 	(?l "to LaTeX" org-ref-export-to-latex)
-	(?o "to ODT" org-ref-export-as-odt)
+	(?p "to PDF" org-ref-export-to-pdf)
+	(?o "to ODT" org-ref-export-to-odt)
 	(?O "to Org buffer" org-ref-export-as-org)
 	(?e "to email" org-ref-export-to-message))))
 
@@ -441,6 +507,64 @@ VISIBLE-ONLY BODY-ONLY and INFO."
 (defun org-ref-csl-preprocess-buffer (backend)
   "Preprocess the buffer in BACKEND export"
   (org-ref-process-buffer backend))
+
+
+;; A hydra exporter with preprocessors
+(defhydradio org-ref ()
+  (natmove "natmove")
+  (citeproc "CSL citations")
+  (refproc "cross-references")
+  (acrossproc "Acronyms, glossary")
+  (idxproc "Index")
+  (bblproc "BBL citations"))
+
+
+(defun org-ref-export-from-hydra (&optional arg)
+  "Run the export dispatcher with the desired hooks selected in `org-ref-export/body'."
+  (interactive "P")
+
+  (when (and org-ref/citeproc org-ref/bblproc)
+    (error "You cannot use CSL and BBL at the same time."))
+  
+  (let ((org-export-before-parsing-hook org-export-before-parsing-hook))
+    (when org-ref/citeproc
+      (cl-pushnew 'org-ref-csl-preprocess-buffer org-export-before-parsing-hook))
+
+    (when org-ref/refproc
+      (cl-pushnew 'org-ref-refproc org-export-before-parsing-hook))
+
+    (when org-ref/acrossproc
+      (cl-pushnew 'org-ref-acrossproc org-export-before-parsing-hook))
+
+    (when org-ref/idxproc
+      (cl-pushnew 'org-ref-idxproc org-export-before-parsing-hook))
+
+    (when org-ref/bblproc
+      (unless (featurep 'org-ref-natbib-bbl-citeproc)
+	(require 'org-ref-natbib-bbl-citeproc))
+      (cl-pushnew 'org-ref-bbl-preprocess org-export-before-parsing-hook))
+    
+    ;; this goes last since it moves cites before they might get replaced.
+    (when org-ref/natmove
+      (cl-pushnew 'org-ref-cite-natmove org-export-before-parsing-hook))
+
+    (org-export-dispatch arg)))
+
+
+(defhydra org-ref-export (:color red)
+  "
+_C-n_: natmove % -15`org-ref/natmove       _C-c_: citeproc % -15`org-ref/citeproc^^^  _C-r_: refproc % -15`org-ref/refproc^^^
+_C-a_: acrossproc % -15`org-ref/acrossproc    _C-i_: idxproc % -15`org-ref/idxproc^^^   _C-b_: bblproc % -15`org-ref/bblproc^^^
+"
+  ("C-n" (org-ref/natmove) nil)
+  ("C-c" (org-ref/citeproc) nil)
+  ("C-r" (org-ref/refproc) nil)
+  ("C-a" (org-ref/acrossproc) nil)
+  ("C-i" (org-ref/idxproc) nil)
+  ("C-b" (org-ref/bblproc) nil)
+
+  ("e" org-ref-export-from-hydra "Export" :color blue)
+  ("q" nil "quit"))
 
 (provide 'org-ref-export)
 

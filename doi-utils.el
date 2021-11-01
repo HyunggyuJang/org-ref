@@ -55,6 +55,7 @@
 
 (require 'url-http)
 (require 'org-ref-utils)
+(require 'hydra)
 
 ;;* Customization
 (defgroup doi-utils nil
@@ -103,12 +104,16 @@ e.g. (lambda () nil)"
 The default is `doi-utils-get-json-metadata', but it sometimes
 fails with a proxy. An alternative is
 `doi-utils-get-json-metadata-curl' which requires an external
-program to use curl.")
+program to use curl."
+  :type 'function
+  :group 'doi-utils)
 
 
 (defcustom doi-utils-async-download t
   "Use `doi-utils-async-download-pdf' to get pdfs asynchrounously.
-If non-nil use `doi-utils-get-bibtex-entry-pdf' synchronously.")
+If non-nil use `doi-utils-get-bibtex-entry-pdf' synchronously."
+  :type 'boolean
+  :group 'doi-utils)
 
 
 ;;* Getting pdf files from a DOI
@@ -642,6 +647,10 @@ until one is found."
           (throw 'pdf-url this-pdf-url))))))
 
 ;;** Finally, download the pdf
+(defvar bibtex-completion-library-path)
+(defvar bibtex-completion-bibliography)
+(declare-function async-start "async")
+
 ;;;###autoload
 (defun doi-utils-async-download-pdf ()
   "Download the PDF for bibtex entry at point asynchronously.
@@ -682,24 +691,25 @@ too. "
 	  (setq package-user-dir ,package-user-dir)
 	  (require 'package)
 	  (package-initialize)
-	  (add-to-list 'load-path ,(file-name-directory (locate-library "doi-utils")))
+	  (setq load-path (list ,@load-path))
 	  (require 'doi-utils)
-	  ;; (load-file ,(locate-library "doi-utils"))
+
 	  (setq pdf-url (doi-utils-get-pdf-url ,doi))
+	  (when pdf-url
+	    (url-copy-file pdf-url ,pdf-file t)
 
-	  (url-copy-file pdf-url ,pdf-file t)
-
-	  (let* ((header (with-temp-buffer
-			   (set-buffer-multibyte nil)
-			   (insert-file-contents-literally ,pdf-file nil 0 5)
-			   (buffer-string)))
-		 (valid (string-equal (encode-coding-string header 'utf-8) "%PDF-")))
-	    (if valid
-		(format "%s downloaded" ,pdf-file)
-	      (delete-file ,pdf-file)
-	      (require 'browse-url)
-	      (browse-url ,pdf-url)
-	      (message "Invalid pdf (file deleted). Header = %s" header))))
+	    (let* ((header (with-temp-buffer
+			     (set-buffer-multibyte nil)
+			     (insert-file-contents-literally ,pdf-file nil 0 5)
+			     (buffer-string)))
+		   (valid (and (stringp header)
+			       (string-equal (encode-coding-string header 'utf-8) "%PDF-"))))
+	      (if valid
+		  (format "%s downloaded" ,pdf-file)
+		(delete-file ,pdf-file)
+		(require 'browse-url)
+		(browse-url pdf-url)
+		(message "Invalid pdf (file deleted). Header = %s" header)))))
        `(lambda (result)
 	  (message "doi-utils-async-download-pdf: %s"  result))))))
 
@@ -761,6 +771,10 @@ checked."
 	    (write-file pdf-file)))
 	 (t
 	  (message "We don't have a recipe for this journal.")))
+
+	(when (file-exists-p pdf-file)
+	  (bibtex-set-field "file" pdf-file))
+
 	(when (and doi-utils-open-pdf-after-download (file-exists-p pdf-file))
 	  (org-open-file pdf-file))))))
 
@@ -988,8 +1002,7 @@ MATCHING-TYPES."
 ;; cursor, clean the entry, try to get the pdf.
 
 (defun doi-utils-insert-bibtex-entry-from-doi (doi)
-  "Insert bibtex entry from a DOI.
-Also cleans entry using ‘org-ref’, and tries to download the corresponding pdf."
+  "Insert and clean bibtex entry from a DOI."
   (insert (doi-utils-doi-to-bibtex-string doi))
   (backward-char)
   ;; set date added for the record
@@ -1297,14 +1310,15 @@ May be empty if none are found."
 
 ;;;###autoload
 (defun doi-utils-open-bibtex (doi)
-  "Search through variable `reftex-default-bibliography' for DOI."
+  "Search through variable `bibtex-completion-bibliography' for DOI."
   (interactive "sDOI: ")
-  (catch 'file
-    (dolist (f reftex-default-bibliography)
-      (find-file f)
-      (when (search-forward doi (point-max) t)
-        (bibtex-beginning-of-entry)
-        (throw 'file t)))))
+  (cl-loop for f in (if (listp bibtex-completion-bibliography)
+			bibtex-completion-bibliography
+		      (list bibtex-completion-bibliography))
+	   when (progn (find-file f)
+		       (when (search-forward doi (point-max) t)
+			 (bibtex-beginning-of-entry)))
+	   return f))
 
 
 ;;;###autoload
@@ -1334,6 +1348,7 @@ May be empty if none are found."
     "http://www.ncbi.nlm.nih.gov/pubmed/?term=%s"
     (url-hexify-string doi))))
 
+(declare-function org-element-property "org-element")
 
 (defhydra doi-link-follow (:color blue :hint nil)
   "DOI actions:
@@ -1398,7 +1413,7 @@ May be empty if none are found."
 ;; free form citation that may give us something back. We do this to get a list
 ;; of candidates, which could be used to get the doi.
 
-
+(declare-function org-ref-bib-citation "org-ref-bibtex")
 ;;;###autoload
 (defun doi-utils-crossref-citation-query ()
   "Query Crossref with the title of the bibtex entry at point.
@@ -1430,7 +1445,7 @@ Get a list of possible matches. Choose one with completion."
       	  (replace-match "\\\"" nil t)))
       (setq raw-json-string (buffer-substring url-http-end-of-headers (point-max)))
       ;; decode json string
-      (setq json-string (decode-coding-string (string-make-unibyte raw-json-string) 'utf-8))
+      (setq json-string (decode-coding-string (encode-coding-string raw-json-string 'utf-8) 'utf-8))
       (setq json-data (json-read-from-string json-string)))
 
     (let* ((name (format "Crossref hits for %s" (org-ref-bib-citation)))
@@ -1544,7 +1559,7 @@ Get a list of possible matches. Choose one with completion."
       	  (replace-match "\\\"" nil t)))
       (setq raw-json-string (buffer-substring url-http-end-of-headers (point-max)))
       ;; decode json string
-      (setq json-string (decode-coding-string (string-make-unibyte raw-json-string) 'utf-8))
+      (setq json-string (decode-coding-string (encode-coding-string raw-json-string 'utf-8) 'utf-8))
       (setq json-data (json-read-from-string json-string)))
 
     (let* ((name (format "Crossref hits for %s"

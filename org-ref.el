@@ -1,12 +1,12 @@
-;;; org-ref.el --- citations, cross-references and bibliographies in org-mode
+;;; org-ref.el --- citations, cross-references and bibliographies in org-mode -*- lexical-binding: t; -*-
 
-;; Copyright(C) 2014-2016 John Kitchin
+;; Copyright(C) 2014-2021 John Kitchin
 
 ;; Author: John Kitchin <jkitchin@andrew.cmu.edu>
 ;; URL: https://github.com/jkitchin/org-ref
 ;; Version: 3.0
 ;; Keywords: org-mode, cite, ref, label
-;; Package-Requires: ((dash "0") (s "0") (f "0") (htmlize "0") (hydra "0") (bibtex-completion "0"))
+;; Package-Requires: ((dash "0") (s "0") (f "0") (htmlize "0") (hydra "0") (parsebib "0") (bibtex-completion "0") (citeproc "0"))
 ;; This file is not currently part of GNU Emacs.
 
 ;; This program is free software; you can redistribute it and/or
@@ -29,7 +29,8 @@
 ;; Lisp code to setup bibliography, cite, ref and label org-mode links. The
 ;; links are clickable and do things that are useful.
 ;;
-;; This uses vanilla completing-read in Emacs.
+;; This uses vanilla completing-read in Emacs. You can customize by requiring
+;; `org-ref-helm' or `org-ref-ivy' after this.
 
 ;; You should really read org-ref.org in this package for details.
 ;;

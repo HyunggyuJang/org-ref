@@ -9,6 +9,12 @@ INIT-DEVEL = test/init-devel.el
 
 all: test
 
+github-actions:
+	git clone https://github.com/cask/cask ~/.cask
+	PATH=${HOME}/.cask/bin:${PATH} cask install
+	PATH=${HOME}/.cask/bin:${PATH} ${CASK_EXEC} ert-runner
+
+
 test: clean
 	${CASK_EXEC} ert-runner
 
@@ -47,14 +53,12 @@ no-user:
 ivy:
 	${CASK_EXEC} ${emacs} -Q  \
 	--eval="(setq scimax-load-user-dir nil)" \
-	--eval="(setq org-ref-completion-library 'org-ref-ivy-cite)" \
 	-l ${INIT} \
 	tests/test-1.org
 
 devel:
 	${CASK_EXEC} ${emacs} -Q  \
 	--eval="(setq scimax-load-user-dir nil)" \
-	--eval="(setq org-ref-completion-library 'org-ref-ivy-cite)" \
 	-l ${INIT} \
 	-l ${INIT-DEVEL}
 

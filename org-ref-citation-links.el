@@ -1,4 +1,4 @@
-;;; org-ref-citation-links.el --- citation links for org-ref
+;;; org-ref-citation-links.el --- citation links for org-ref -*- lexical-binding: t; -*-
 ;;
 ;; Copyright (C) 2021  John Kitchin
 
@@ -25,49 +25,74 @@
 ;; their own pre/postnotes.
 ;;
 ;; These links are fontified to indicate if the citation keys are valid, and to
-;; indicate the pre/post-note structure.
+;; indicate the pre/post-note structure. They also have tooltips that show
+;; information from the bibtex entry.
 ;;
-;; Each link is functional, and clicking on one will open a hydra menu of
-;; actions that range from opening the bibtex entry, notes, pdf or associated
-;; URL, to searching the internet for related articles.
+;; Each link is functional, and clicking on one will open a hydra menu
+;; `org-ref-citation-hydra/body' of actions that range from opening the bibtex
+;; entry, notes, pdf or associated URL, to searching the internet for related
+;; articles.
 ;;
 ;; Each citation link also has a local keymap on it, which provides keyboard
 ;; shortcuts for some actions like sorting, rearranging and navigating citation
-;; links.
+;; links. See `org-ref-cite-keymap' for the key bindings.
 ;;
 ;; Each link exports to a corresponding LaTeX citation command, or can be
 ;; rendered with CSL for other kinds of exports like HTML, markdown, or ODT.
 ;;
+;; This library also provides a minimal set of insertion functions that use
+;; completion. You can also use the org link completion mechanism to insert a
+;; citation.
+;;
+;; natmove like preprocessing is provided with `org-ref-cite-natmove'.
 ;;
 ;;; Code:
+
 (require 'hydra)
+(require 'xref)
+
+(defgroup org-ref-faces nil
+  "A group for faces in `org-ref'."
+  :group 'org-ref-faces)
+
 
 (defface org-ref-cite-face
   `((t (:inherit org-link
                  :foreground "forest green")))
-  "Color for cite-like links in org-ref.")
+  "Color for cite-like links in org-ref."
+  :group 'org-ref-faces)
 
 
 (defface org-ref-bad-cite-key-face
   `((t (:inherit org-ref-cite-face
 		 :foreground "red")))
-  "Color for bad cite keys in org-ref.")
+  "Color for bad cite keys in org-ref."
+  :group 'org-ref-faces)
 
 
 (defface org-ref-cite-global-prefix/suffix-face
   `((t (:inherit org-ref-cite-face :weight bold)))
-  "Face for global prefix/suffix in a cite link.")
+  "Face for global prefix/suffix in a cite link."
+  :group 'org-ref-faces)
+
+
+(defface org-ref-cite-&-face
+  `((t (:inherit org-ref-cite-face :weight bold)))
+  "Face for the starting & in a cite key."
+  :group 'org-ref-faces)
 
 
 (defface org-ref-cite-local-prefix/suffix-face
   `((t (:inherit org-ref-cite-face :slant italic)))
-  "Face for local prefix/suffix in a cite link.")
+  "Face for local prefix/suffix in a cite link."
+  :group 'org-ref-faces)
 
 
 (defface org-ref-cite-invalid-local-prefix/suffix-face
   `((t (:inherit org-ref-cite-face :foreground "red")))
   "Face for invalid local prefix/suffix in a cite link.
-This is mostly for multicites and natbib.")
+This is mostly for multicites and natbib."
+  :group 'org-ref-faces)
 
 
 (defcustom org-ref-default-citation-link
@@ -78,50 +103,100 @@ This is mostly for multicites and natbib.")
 
 
 (defcustom org-ref-natbib-types
-  '("cite" "nocite"
-    "citet" "citet*" "citep" "citep*"
-    "citealt" "citealt*" "citealp" "citealp*"
-    "citenum" "citetext"
-    "citeauthor" "citeauthor*"
-    "citeyear"  "citeyearpar"
-    "Citet" "Citep" "Citealt" "Citealp" "Citeauthor"
-    "Citet*" "Citep*" "Citealt*" "Citealp*" "Citeauthor*")
+  '(("cite" "basic citation")
+    ("nocite" "add key to bibliography, but do not cite it in the text")
+    ("citet" "textual, Jones et al. (1990")
+    ("citet*" "textual, full author list Jones, Baker, and Williams (1990)")
+    ("citep" "parenthetical citation (Jones et al. (1990)")
+    ("citep*" "parenthetical, full author list, (Jones, Baker, and Williams, 1990)")
+    ("citealt" "same as citet, but without parentheses")
+    ("citealt*" "same as citet, with full author list but without parentheses")
+    ("citealp" "same as citep, but without parentheses")
+    ("citealp*" "same as citep, with full author list, but without parentheses")
+    ("citenum" "The number of the citation in the bibliography, e.g. 11")
+    ("citetext" "text inserted in citation in the document")
+    ("citeauthor" "Only the author, Jones et al.")
+    ("citeauthor*" "The full author list, Jones, Baker, and Williams")
+    ("citeyear" "The year of the citation, 2021")
+    ("citeyearpar" "The year in parentheses (2021)")
+    ("Citet" "like citet, but with forced capitalization for starting sentences")
+    ("Citep" "like citep, but with forced capitalization for starting sentences")
+    ("Citealt" "like citet, but with forced capitalization and no parentheses")
+    ("Citealp" "like citep, but with forced capitalization and no parentheses")
+    ("Citeauthor" "like citeauthor with forced capitalization")
+    ("Citet*" "like citet, with full author list and forced capitalization")
+    ("Citep*" "like citep, with full author list and forced capitalization")
+    ("Citealt*" "like citet, with full author list, forced capitalization and no parentheses")
+    ("Citealp*" "like citep, with full author list, forced capitalization and no parentheses")
+    ("Citeauthor*" "like citeauthor with forced capitalization"))
   "Natbib commands can have many references, and global prefix/suffix text.
-For natbib cite commands see
-http://tug.ctan.org/macros/latex/contrib/natbib/natnotes.pdf"
-  :type '(repeat :tag "List of citation types" string)
+  For natbib cite commands see
+  http://tug.ctan.org/macros/latex/contrib/natbib/natnotes.pdf"
+  :type '(repeat :tag "List of citation types" (list string string))
   :group 'org-ref)
 
 
 (defcustom org-ref-biblatex-types
-  '("Cite"
-    "parencite" "Parencite"
-    "footcite" "footcitetext"
-    "textcite" "Textcite"
-    "smartcite" "Smartcite"
-    "cite*" "parencite*" "supercite"
-    "autocite" "Autocite" "autocite*" "Autocite*"
-    "Citeauthor*"
-    "citetitle" "citetitle*"
-    "citedate" "citedate*"
-    "citeurl"
-    "fullcite" "footfullcite"
+  '(("Cite" "basic citation with capitalization")
+    ("parencite" "similar to cite with parentheses")
+    ("Parencite" "similar to cite with parentheses and capitalization")
+    ("footcite" "Put the citation in a footnote")
+    ("footcitetext" "Put the citation in a footnote using \footnotetext")
+    
+    ("textcite" "print the authors or editors as a subject of the sentence")
+    ("Textcite" "print the authors or editors as a subject of the sentence with capitalization")
+    ("smartcite" "like parencite in a footnote, and footcite in the body")
+    ("Smartcite" "like parencite in a footnote, and footcite in the body with capitalization")
+    ("cite*" "similar to cite, but prints the year or title")
+    ("parencite*" "similar to parencite, but prints the year or title")
+    ("supercite" "superscripted numeric citation (only in numberic styles)")
+    
+    ("autocite" "handles some punctuation nuances")
+    ("Autocite" "handles some punctuation nuances with punctuation")
+    ("autocite*" "same as autocite but * is passed to the backend")
+    ("Autocite*" "same as Autocite but * is passed to the backend")
+    
+    ("citetitle" "the shorttitle or title field")
+    ("citetitle*" "the full title")
+    
+    ("citeyear" "the year field")
+    ("citeyear*" "the year field and extradate information if available")
+    
+    ("citedate" "the full date or year")
+    ("citedate*" "the full date or year, including extradate information if available")
+    
+    ("citeurl" "the url field")
+    
+    ("fullcite" "create a full citation similar to what is in the bibliography")
+    ("footfullcite" "create a full citation as a footnote")
     ;; "volcite" "Volcite" cannot support the syntax
-    "notecite" "Notecite"
-    "pnotecite" "Pnotecite"
-    "fnotecite")
+    ("notecite" "print prenote and postnote, but no citation")
+    ("Notecite" "print prenote and postnote, but no citation with capitalization")
+    
+    ("pnotecite" "similar to notecite with parentheses")
+    ("Pnotecite" "similar to Notecite with parentheses")
+    ("fnotecite" "similar to notecite in a footnote"))
   "biblatex commands.
-Biblatex commands
-https://mirrors.ibiblio.org/CTAN/macros/latex/contrib/biblatex/doc/biblatex.pdf"
+  Biblatex commands
+  https://mirrors.ibiblio.org/CTAN/macros/latex/contrib/biblatex/doc/biblatex.pdf"
   :type '(repeat :tag "List of citation types" string)
   :group 'org-ref)
 
 
 (defcustom org-ref-biblatex-multitypes
-  '("cites" "Cites" "parencites" "Parencites"
-    "footcites" "footcitetexts"
-    "smartcites" "Smartcites" "textcites" "Textcites"
-    "supercites" "autocites" "Autocites")
+  '(("cites" "multicite version of cite")
+    ("Cites" "multicite version of Cite")
+    ("parencites" "multicite version of parencite")
+    ("Parencites" "multicite version of Parencite")
+    ("footcites" "multicite version of footcite")
+    ("footcitetexts" "multicite version of footcitetext")
+    ("smartcites" "multicite version of smartcite")
+    ("Smartcites" "multicite version of Smartcite")
+    ("textcites" "multicite version of textcite")
+    ("Textcites" "multicite version of Textcite")
+    ("supercites" "multicite version of supercite")
+    ("autocites" "multicite version of autocite")
+    ("Autocites" "multicite version of Autocite"))
   "Multicite link types"
   :type '(repeat :tag "List of citation types" string)
   :group 'org-ref)
@@ -133,11 +208,13 @@ https://mirrors.ibiblio.org/CTAN/macros/latex/contrib/biblatex/doc/biblatex.pdf"
    org-ref-biblatex-types
    org-ref-biblatex-multitypes
    ;; for the bibentry package
-   '("bibentry"))
+   '("bibentry" "Insert the bibtex entry"))
   "List of citation types known in `org-ref'."
-  :type '(repeat :tag "List of citation types" string)
+  :type '(repeat :tag "List of citation types (type description)" (list string string))
   :group 'org-ref)
 
+
+(defvar org-ref-insert-cite-function)
 
 (defcustom org-ref-cite-keymap
   (let ((map (copy-keymap org-mouse-map)))
@@ -152,6 +229,12 @@ https://mirrors.ibiblio.org/CTAN/macros/latex/contrib/biblatex/doc/biblatex.pdf"
     (define-key map (kbd "<tab>") (lambda ()
 				    (interactive)
 				    (funcall org-ref-insert-cite-function)))
+
+    ;; xref navigation
+    (define-key map (kbd "M-.") (lambda ()
+				  (interactive)
+				  (xref-push-marker-stack)
+				  (org-ref-open-citation-at-point)))
     map)
   "Keymap for cite links."
   :type 'symbol
@@ -160,30 +243,31 @@ https://mirrors.ibiblio.org/CTAN/macros/latex/contrib/biblatex/doc/biblatex.pdf"
 
 (defcustom org-ref-cite-insert-version 3
   "Default version to insert citations with.
-The default is 3. In legacy documents you might prefer 2 though,
-so this variable can be buffer- or directory local if you want.
+  The default is 3. In legacy documents you might prefer 2 though,
+  so this variable can be buffer- or directory local if you want.
 
-version 2 means the links are not bracketed, and comma-separated keys.
+  version 2 means the links are not bracketed, and comma-separated keys.
 
-version 3 means the links are bracketed, with semicolon-separated
-@keys."
+  version 3 means the links are bracketed, with semicolon-separated
+  &keys."
   :type 'number
   :group 'org-ref)
 
+
 (defvar org-ref-citation-key-re
-  (rx "@" (group-n 1 (one-or-more (any word "-.:?!`'/*@+|(){}<>&_^$#%&~"))))
+  (rx "&" (group-n 1 (one-or-more (any word "-.:?!`'/*@+|(){}<>&_^$#%~"))))
   "Numbered regular expression for a version 3 cite key.
-Key is in group 1.
-Adapted from the expression in org-cite.")
+  Key is in group 1.
+  Adapted from the expression in org-cite.")
 
 
 (defun org-ref-cite-version (path)
   "Return the version for PATH.
-PATH is from a cite link.
-Version 2 is separated by commas and uses plain keys.
-Version 3 is separated by semicolons and uses @keys.
-I think that if there is a @ in path, it must be version 3."
-  (if (string-match "@" path)
+  PATH is from a cite link.
+  Version 2 is separated by commas and uses plain keys.
+  Version 3 is separated by semicolons and uses &keys.
+  I think that if there is a & in path, it must be version 3."
+  (if (string-match "&" path)
       3
     2))
 
@@ -192,46 +276,46 @@ I think that if there is a @ in path, it must be version 3."
 
 (defun org-ref-parse-cite-path (path)
   "Return a data structure representing the PATH.
-the data structure is a plist with (:version :prefix :suffix :references).
-Each reference is a plist with (:key :prefix :suffix)."
+  the data structure is a plist with (:version :prefix :suffix :references).
+  Each reference is a plist with (:key :prefix :suffix)."
   (pcase (org-ref-cite-version path)
     (2
      ;; This will not have any prefix or suffix, since that was previously done in the desc.
      (list :version 2 :references (cl-loop for key in (split-string path ",") collect
 					   (list :key (string-trim key)))))
     (3 (let ((citation-references (split-string path ";"))
-	     (these-results '(:version 3)))
-	 ;; if the first ref doesn't match a key, it must be a global prefix
-	 ;; this pops the referenc off.
-	 (when (null (string-match org-ref-citation-key-re (cl-first citation-references)))
-	   (setq these-results (append these-results (list :prefix (cl-first citation-references)))
-		 citation-references (cdr citation-references)))
+  (these-results '(:version 3)))
+    ;; if the first ref doesn't match a key, it must be a global prefix
+    ;; this pops the referenc off.
+    (when (null (string-match org-ref-citation-key-re (cl-first citation-references)))
+      (setq these-results (append these-results (list :prefix (cl-first citation-references)))
+	    citation-references (cdr citation-references)))
 
-	 ;; if the last ref doesn't match a key, then it is a global suffix
-	 ;; we remove the last one if this is true after getting the suffix.
-	 (when (null (string-match org-ref-citation-key-re (car (last citation-references))))
-	   (setq these-results (append these-results (list :suffix (car (last citation-references))))
-		 citation-references (butlast citation-references)))
+    ;; if the last ref doesn't match a key, then it is a global suffix
+    ;; we remove the last one if this is true after getting the suffix.
+    (when (null (string-match org-ref-citation-key-re (car (last citation-references))))
+      (setq these-results (append these-results (list :suffix (car (last citation-references))))
+	    citation-references (butlast citation-references)))
 
-	 (setq these-results
-	       (append these-results
-		       (list
-			:references
-			(cl-loop for s in citation-references collect
-				 (if (null (string-match org-ref-citation-key-re s))
-				     (error "No label found")
-				   (let* ((key (match-string-no-properties 1 s))
-					  (key-start (match-beginning 0))
-					  (key-end (match-end 0))
-					  (prefix (let ((p (substring s 0 key-start)))
-						    (if (string= "" (string-trim p))
-							nil
-						      p)))
-					  (suffix (let ((s (substring s key-end)))
-						    (if (string= "" (string-trim s))
-							nil
-						      s))))
-				     (list :key key :prefix prefix :suffix suffix)))))))))))
+    (setq these-results
+	  (append these-results
+		  (list
+		   :references
+		   (cl-loop for s in citation-references collect
+			    (if (null (string-match org-ref-citation-key-re s))
+				(error "No label found")
+			      (let* ((key (match-string-no-properties 1 s))
+				     (key-start (match-beginning 0))
+				     (key-end (match-end 0))
+				     (prefix (let ((p (substring s 0 key-start)))
+					       (if (string= "" (string-trim p))
+						   nil
+						 p)))
+				     (suffix (let ((s (substring s key-end)))
+					       (if (string= "" (string-trim s))
+						   nil
+						 s))))
+				(list :key key :prefix prefix :suffix suffix)))))))))))
 
 
 (defun org-ref-interpret-cite-data (data)
@@ -246,7 +330,7 @@ to a path string."
       (string-join (cl-loop for ref in (plist-get data :references) collect
 			    (concat
 			     (plist-get ref :prefix)
-			     "@" (plist-get ref :key)
+			     "&" (plist-get ref :key)
 			     (plist-get ref :suffix)))
 		   ";")
       (when-let (suffix (plist-get data :suffix)) (concat ";" suffix))))))
@@ -254,81 +338,42 @@ to a path string."
 
 ;; * Activating citation links
 ;;
-;; We use the activate-func for sophisticated fontification of pieces of each
-;; link.
-
-(defvar-local org-ref-buffer-local-bib nil
-  "Buffer-local variable for current bibliography files.
-This is used to tell when the local bibliography has changed,
-which means we need to re-compute the valid-keys.")
+;; We use the activate-func for fontification of pieces of each link.
 
 
-(defvar-local org-ref-buffer-local-valid-keys nil
-  "Buffer-local variable for current valid keys.
-This is used to cache the valid keys.")
-
-(defvar-local org-ref-buffer-local-candidates nil
-  "Buffer-local variable to store completion candidates.")
-
-(defun org-ref-clear-cache ()
-  (interactive)
-  (setq-local org-ref-buffer-local-bib nil
-	      org-ref-buffer-local-valid-keys nil
-	      org-ref-buffer-local-candidates nil))
-
-
-(defun org-ref-cache-valid-p ()
-  "Return non-nil if cache is valid."
-  (let ((current-bib (cl-loop for bibfile in (org-ref-find-bibliography)
-			      collect
-			      (cons bibfile
-				    (file-attribute-modification-time (file-attributes bibfile))))))
-    (equal current-bib org-ref-buffer-local-bib)))
-
-
-(defun org-ref-refresh-cache ()
-  "Refresh the cache."
-  (let (valid-keys local-candidates)
-    (setq-local
-     org-ref-buffer-local-bib (cl-loop for bibfile in (org-ref-find-bibliography)
-				       collect
-				       (cons bibfile
-					     (file-attribute-modification-time (file-attributes bibfile))))
-     org-ref-buffer-local-valid-keys nil
-     org-ref-buffer-local-candidates nil)
-
-    (let ((bibtex-completion-bibliography (mapcar 'car org-ref-buffer-local-bib)))
-      (bibtex-completion-init)
-      (cl-loop for entry in (bibtex-completion-candidates)
-	       do
-	       (push (cdr (assoc "=key=" (cdr entry))) valid-keys)
-	       (push (cons (bibtex-completion-format-entry entry (1- (frame-width)))
-			   (cdr entry))
-		     local-candidates)))
-
-    (setq-local org-ref-buffer-local-candidates (reverse local-candidates)
-		org-ref-buffer-local-valid-keys valid-keys)))
-
+(declare-function bibtex-completion-candidates "bibtex-completion")
+(declare-function bibtex-completion-init "bibtex-completion")
+(defvar bibtex-completion-bibliography)
+(defvar bibtex-completion-display-formats-internal)
 
 (defun org-ref-valid-keys ()
   "Return a list of valid bibtex keys for this buffer.
-This is used a lot in `org-ref-cite-activate' so we try to cache
-it as a local variable, but also detect when the cache is
-invalid, e.g. if you change the bibliographies."
-  (unless (org-ref-cache-valid-p)
-    (org-ref-refresh-cache))
-  org-ref-buffer-local-valid-keys)
+This is used a lot in `org-ref-cite-activate' so it needs to be
+fast, but also up to date."
+  ;; this seems to be needed, but we don't want to do this every time
+  (unless bibtex-completion-display-formats-internal
+    (bibtex-completion-init))
+  
+  (let ((bibtex-completion-bibliography (org-ref-find-bibliography)))
+    (cl-loop for entry in (bibtex-completion-candidates)
+	     collect
+	     (cdr (assoc "=key=" (cdr entry))))))
 
 
 (defun org-ref-cite-activate (start end path _bracketp)
   "Activation function for a cite link.
 START and END are the bounds of the link.
 PATH has the citations in it."
-  (let* ((valid-keys (org-ref-valid-keys)) ;; this is cached in a buffer local var.
+  (let* ((valid-keys (org-ref-valid-keys)) 
+	 valid-key
 	 substrings)
     (goto-char start)
     (pcase (org-ref-cite-version path)
       (2
+       ;; This makes the brackets visible, but we only need it when there is a
+       ;; description.
+       (when (looking-at "\\[\\[\\(.*\\)\\]\\[\\(.*\\)\\]\\]")
+	 (remove-text-properties start end '(invisible nil)))
        (setq substrings (split-string path ","))
        (cl-loop for key in substrings
 		do
@@ -382,9 +427,12 @@ PATH has the citations in it."
 		  (when key
 		    (save-excursion
 		      (save-match-data
-			(search-backward (concat "@" key))
+			(search-backward (concat "&" key))
 			(setq key-begin (match-beginning 0)
 			      key-end (match-end 0))))
+		    ;; mark the &
+		    (put-text-property key-begin (+ 1 key-begin) 
+				       'face 'org-ref-cite-&-face)
 		    ;; store key on the whole thing
 		    (put-text-property (match-beginning 0)
 				       (match-end 0)
@@ -407,6 +455,8 @@ PATH has the citations in it."
 
 
 ;; * Following citation links
+
+(declare-function org-ref-get-bibtex-key-and-file "org-ref-core")
 
 (defhydra org-ref-citation-hydra (:color blue :hint nil)
   "Citation actions
@@ -432,6 +482,13 @@ PATH has the citations in it."
   ("f" (kill-new (bibtex-completion-apa-format-reference
 		  (org-ref-get-bibtex-key-under-cursor)))
    "Copy formatted" :column "Copy")
+  ("h" (kill-new
+	(format "* %s\n\n cite:&%s"
+		(bibtex-completion-apa-format-reference
+		 (org-ref-get-bibtex-key-under-cursor))
+		(car (org-ref-get-bibtex-key-and-file))))
+   "Copy org heading"
+   :column "Copy")
 
   ;; Editing actions
   ("<left>" org-ref-cite-shift-left "Shift left" :color red :column "Edit")
@@ -453,7 +510,16 @@ PATH has the citations in it."
   "Follow a cite link."
   (org-ref-citation-hydra/body))
 
+
 ;; * Citation links tooltips
+(defvar bibtex-completion-bibliography)
+(defvar bibtex-completion-pdf-symbol)
+(defvar bibtex-completion-notes-symbol)
+(defvar bibtex-completion-find-note-functions)
+
+(declare-function org-ref-find-bibliography "org-ref-core")
+(declare-function bibtex-completion-find-pdf "bibtex-completion")
+(declare-function bibtex-completion-apa-format-reference "bibtex-completion")
 
 (defun org-ref-cite-tooltip (_win _obj position)
   "Get a tooltip for the cite at POSITION."
@@ -621,19 +687,19 @@ Use with apply-partially."
 ;;
 ;; This allows you to type C-c l, choose a cite link type, and then insert a key.
 
-(defun org-ref-cite-link-complete (cmd &optional arg)
+(defun org-ref-cite-link-complete (cmd &optional _arg)
   "Cite link completion for CMD."
   (concat
    cmd ":"
-   "@" (org-ref-read-key)))
+   "&" (org-ref-read-key)))
 
 ;; * Generate all the links
 ;;
 ;; We loop on the three categories because there are some differences between
 ;; them, mostly in the multitypes.
 
-(cl-loop for cmd in (append org-ref-natbib-types
-			    org-ref-biblatex-types)
+(cl-loop for (cmd _desc) in (append org-ref-natbib-types
+				    org-ref-biblatex-types)
 	 do
 	 (org-link-set-parameters
 	  cmd
@@ -645,7 +711,7 @@ Use with apply-partially."
 	  :activate-func #'org-ref-cite-activate))
 
 
-(cl-loop for cmd in org-ref-biblatex-multitypes do
+(cl-loop for (cmd _desc) in org-ref-biblatex-multitypes do
 	 (org-link-set-parameters
 	  cmd
 	  :complete (apply-partially #'org-ref-cite-link-complete cmd)
@@ -654,6 +720,16 @@ Use with apply-partially."
 	  :help-echo #'org-ref-cite-tooltip
 	  :export (apply-partially 'org-ref-multicite-export cmd)
 	  :activate-func #'org-ref-cite-activate))
+
+
+(org-link-set-parameters
+ "bibentry" 
+ :complete (apply-partially #'org-ref-cite-link-complete "bibentry")
+ :follow #'org-ref-cite-follow
+ :face 'org-ref-cite-face
+ :help-echo #'org-ref-cite-tooltip
+ :export (apply-partially 'org-ref-cite-export  "bibentry")
+ :activate-func #'org-ref-cite-activate)
 
 
 ;; * Cite link utilities
@@ -670,9 +746,9 @@ Use with apply-partially."
 	 (data (org-ref-parse-cite-path link-string))
 	 (references (plist-get data :references))
 	 (cp (point))
-         key keys i)
+         key i)
     ;;   We only want this to work on citation links
-    (when (-contains? org-ref-cite-types type)
+    (when (assoc type org-ref-cite-types)
       (setq key (org-ref-get-bibtex-key-under-cursor))
       (if (null key)
 	  ;; delete the whole cite
@@ -701,9 +777,9 @@ Use with apply-partially."
 	 (data (org-ref-parse-cite-path link-string))
 	 (references (plist-get data :references))
 	 (cp (point))
-         key keys i)
+         key i)
     ;;   We only want this to work on citation links
-    (when (-contains? org-ref-cite-types type)
+    (when (assoc type org-ref-cite-types)
       (setq key (org-ref-get-bibtex-key-under-cursor))
 
       (if (null key)
@@ -720,11 +796,20 @@ Use with apply-partially."
 	(goto-char cp)))))
 
 
+(declare-function org-element-create "org-element")
+
 ;;;###autoload
 (defun org-ref-change-cite-type ()
   "Change the cite type of citation link at point."
   (interactive)
-  (let* ((new-type (completing-read "Type: " org-ref-cite-types))
+  (let* ((type-annotation (lambda (s)
+			    (let ((item (assoc s minibuffer-completion-table)))
+			      (when item (concat
+					  (make-string (- 12 (length s)) ? )
+					  "-- "
+					  (cl-second item))))))
+	 (completion-extra-properties `(:annotation-function ,type-annotation))
+	 (new-type (completing-read "Type: " org-ref-cite-types))
 	 (cite-link (org-element-context))
 	 (cp (point)))
     (cl--set-buffer-substring
@@ -743,16 +828,22 @@ Use with apply-partially."
   "Return key under the cursor in org-mode.
 If not on a key, but on a cite, prompt for key."
   (if-let ((key (get-text-property (point) 'cite-key)))
+      ;; Point is on a key, so we get it directly
       key
+    ;; point is not on a key, but may still be on a cite link
     (let ((el (org-element-context))
 	  data
 	  keys)
-      (when (and
-	     (eq (org-element-type el) 'link)
-	     (member (org-element-property :type el) org-ref-cite-types))
+      (cond
+       ;; on a cite-link type
+       ((and
+	 (eq (org-element-type el) 'link)
+	 (assoc (org-element-property :type el) org-ref-cite-types))
+
 	(goto-char (org-element-property :begin el))
 	(setq data (org-ref-parse-cite-path (org-element-property :path el))
-	      keys (cl-loop for ref in (plist-get data :references) collect (plist-get ref :key)))
+	      keys (cl-loop for ref in (plist-get data :references)
+			    collect (plist-get ref :key)))
 	(cond
 	 ((= 1 (length keys))
 	  (search-forward (car keys))
@@ -762,7 +853,15 @@ If not on a key, but on a cite, prompt for key."
 	  (setq key (completing-read "Key: " keys))
 	  (search-forward key)
 	  (goto-char (match-beginning 0))))
-	(get-text-property (point) 'cite-key)))))
+	(get-text-property (point) 'cite-key))
+
+       ;; somewhere else, but looking at a cite-type see issue #908. links in
+       ;; places like keywords are not parsed as links, but they seem to get
+       ;; activated, so we can just get onto the key, and then open it.
+       ((assoc (thing-at-point 'word) org-ref-cite-types)
+	(save-excursion
+	  (when (re-search-forward ":" (line-end-position) t)
+	    (get-text-property (point) 'cite-key))))))))
 
 
 ;; ** Shift-arrow sorting of keys in a cite link
@@ -780,13 +879,13 @@ If not on a key, but on a cite, prompt for key."
   (let* ((object (org-element-context))
          (type (org-element-property :type object))
          (begin (org-element-property :begin object))
-         (end (org-element-property :end object))
+         ;; (end (org-element-property :end object))
          (link-string (org-element-property :path object))
 	 (data (org-ref-parse-cite-path link-string))
 	 (references (plist-get data :references))
-         key keys i)
+         key i)
     ;;   We only want this to work on citation links
-    (when (-contains? org-ref-cite-types type)
+    (when (assoc type org-ref-cite-types)
       (setq key (org-ref-get-bibtex-key-under-cursor))
       (setq i (seq-position references key (lambda (el key) (string= key (plist-get el :key))))) ;; defined in org-ref
       (if (> direction 0) ;; shift right
@@ -824,12 +923,13 @@ If not on a key, but on a cite, prompt for key."
   "Replace link at point with sorted link by year."
   (interactive)
   (let* ((object (org-element-context))
-         (type (org-element-property :type object))
+         ;; (type (org-element-property :type object))
          (begin (org-element-property :begin object))
-         (end (org-element-property :end object))
+         ;; (end (org-element-property :end object))
          (link-string (org-element-property :path object))
 	 (data (org-ref-parse-cite-path link-string))
-	 (references (plist-get data :references)))
+	 (references (plist-get data :references))
+	 (bibtex-completion-bibliography (org-ref-find-bibliography)))
 
     (setq references (cl-sort (cl-loop for ref in references collect
 				       (append ref (list :year (bibtex-completion-get-value
@@ -877,18 +977,29 @@ move to the beginning of the previous cite link after this one."
     (when-let (prev (previous-single-property-change (point) 'cite-key))
       (goto-char prev))))
 
+(defvar avy-goto-key)
+(defvar avy-style)
+(declare-function avy--style-fn "avy")
+(declare-function avy-process "avy")
+(declare-function avy-with "avy")
+(declare-function org-element-parse-buffer "org-element")
+(declare-function org-element-property "org-element")
+(declare-function org-element-type "org-element")
+(declare-function org-element-map "org-element")
+(declare-function bibtex-completion-get-value "bibtex-completion")
+(declare-function bibtex-completion-get-entry "bibtex-completion")
 
 ;;;###autoload
 (defun org-ref-jump-to-visible-key ()
   "Jump to a visible key with avy."
   (interactive)
-  (avy-with avy-goto-typo
+  (avy-with avy-goto-key
     (avy-process
      (apply #'append
 	    (save-excursion
 	      (org-element-map (org-element-parse-buffer) 'link
 		(lambda (c)
-		  (when (member (org-element-property :type c) org-ref-cite-types)
+		  (when (assoc (org-element-property :type c) org-ref-cite-types)
 		    (goto-char (org-element-property :begin c))
 		    (let* ((path (org-element-property :path c))
 			   (data (org-ref-parse-cite-path path))
@@ -902,6 +1013,7 @@ move to the beginning of the previous cite link after this one."
 
 
 ;; * Insert links
+(declare-function bibtex-completion-format-entry "bibtex-completion")
 
 ;; The formatting is adapted from ivy-bibtex-transformer. I feel like it is
 ;; slower than ivy-bibtex though. It is completion agnostic though...
@@ -914,23 +1026,35 @@ move to the beginning of the previous cite link after this one."
 			       (cons (bibtex-completion-format-entry entry (1- (frame-width)))
 				     (cdr entry)))
 			     (bibtex-completion-candidates)))
-	 (choice (completing-read "BibTeX entries: " candidates)))
+	 (choice (completing-read "org-ref BibTeX entries: " candidates)))
     (cdr (assoc "=key=" (assoc choice candidates)))))
 
 
-(defun org-ref-insert-cite-key (key)
+(defun org-ref-insert-cite-key (key &optional set-type)
   "Insert KEY at point as a cite link.
+With optional prefix SET-TYPE choose the link type (only on initial insert).
 Rules:
 1. at beginning of key, insert before it.
 2. at middle or end of key, insert after it."
   (let* ((object (org-element-context))
 	 (type (org-element-property :type object))
-	 (cp (point))
-	 link-string version data references key-at-point index)
+	 ;; (cp (point))
+	 link-string version data references key-at-point index
+	 (type-annotation (lambda (s)
+			    (let ((item (assoc s minibuffer-completion-table)))
+			      (when item (concat
+					  (make-string (- 12 (length s)) ? )
+					  "-- "
+					  (cl-second item))))))
+	 (completion-extra-properties `(:annotation-function ,type-annotation)))
 
-    (if (null (member type org-ref-cite-types))
+    (if (null (assoc type org-ref-cite-types))
 	;; Not on a link, so we just insert a cite
-	(insert (format "[[%s:@%s]]" org-ref-default-citation-link key))
+	(insert (format "[[%s:&%s]]"
+			(if set-type
+			    (completing-read "cite type: " org-ref-cite-types) 
+			  org-ref-default-citation-link)
+			key))
 
       ;; On a link somewhere, and we need to figure out what to do.
       (setq link-string (org-element-property :path object)
@@ -958,7 +1082,7 @@ Rules:
 
       (setq data (plist-put data :references
 			    (-insert-at
-			     (+ index (if (and (= 3 version) (looking-at "@"))
+			     (+ index (if (and (= 3 version) (looking-at "&"))
 					  0
 					+1))
 			     (list :key key) references)))
@@ -982,18 +1106,20 @@ Rules:
       (skip-chars-backward " "))))
 
 
-(defun org-ref-insert-cite-keys (keys)
-  "Insert KEYS as citation links."
+(defun org-ref-insert-cite-keys (keys &optional set-type)
+  "Insert KEYS as citation links.
+Optional SET-TYPE to choose the cite type."
   (cl-loop for key in keys
 	   do
-	   (org-ref-insert-cite-key key)))
+	   (org-ref-insert-cite-key key set-type)))
 
 
 ;;;###autoload
-(defun org-ref-insert-cite-link ()
-  "Insert a cite link with completion."
-  (interactive)
-  (org-ref-insert-cite-key (org-ref-read-key)))
+(defun org-ref-insert-cite-link (&optional set-type)
+  "Insert a cite link with completion.
+Optional prefix arg SET-TYPE to choose the cite type."
+  (interactive "P")
+  (org-ref-insert-cite-key (org-ref-read-key) set-type))
 
 
 ;; * natmove like pre-processing
@@ -1007,6 +1133,8 @@ Rules:
 ;; itself. So, Here is a preprocessor function you can use to move all the
 ;; cites.
 
+(declare-function org-ref-get-cite-links "org-ref-export")
+
 (defun org-ref-cite-natmove (_backend)
   "Move citations to the right side of punctuation.
 Intended for use in `org-export-before-parsing-hook'.
@@ -1016,8 +1144,6 @@ Here is an example use:
   (let ((org-export-before-parsing-hook '(org-ref-cite-natmove)))
     (org-open-file (org-latex-export-to-pdf)))"
   (let ((cites (org-ref-get-cite-links))
-	;; temp point holders
-	p1 p2
 	punct)
     (cl-loop for cite in (reverse cites) do
 	     (goto-char (org-element-property :end cite))
@@ -1032,6 +1158,27 @@ Here is an example use:
 	       (skip-chars-backward " ")
 	       (cl--set-buffer-substring (point) (org-element-property :begin cite) "")
 	       (insert punct)))))
+
+;; * Convert version 2 to version 3
+
+(defun org-ref-v2-cites-to-v3 ()
+  "Replace version 2 citation syntax with version 3 citation syntax"
+  (interactive)
+  (cl-loop for cite in (reverse (org-ref-get-cite-links))
+	   collect
+	   (let ((data (org-ref-parse-cite-path (org-element-property :path cite)))
+		 prefix-suffix)
+	     (when (org-element-property :contents-begin cite)
+	       (setq prefix-suffix (split-string (buffer-substring (org-element-property :contents-begin cite)
+								   (org-element-property :contents-end cite))
+						 "::"))
+	       (plist-put data :prefix (cl-first prefix-suffix))
+	       (plist-put data :suffix (cl-second prefix-suffix)))
+	     (plist-put data :version  3)
+	     (setf (buffer-substring (org-element-property :begin cite)
+				     (org-element-property :end cite))
+		   (format "[[%s:%s]]" (org-element-property :type cite)
+			   (org-ref-interpret-cite-data data))))))
 
 
 (provide 'org-ref-citation-links)

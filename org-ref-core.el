@@ -1,4 +1,4 @@
-;;; org-ref-core.el --- citations, cross-references and bibliographies in org-mode
+;;; org-ref-core.el --- citations, cross-references and bibliographies in org-mode -*- lexical-binding: t; -*-
 
 ;; Copyright(C) 2014-2021 John Kitchin
 
@@ -30,6 +30,9 @@
   (require 'cl-lib))
 
 (require 'org)
+;; the eval and compile seems especially necessary for native compilation on the newest Emacs.
+(eval-and-compile (require 'org-macs))
+
 (require 'org-element)
 
 (require 'dash)
@@ -52,31 +55,12 @@
 (require 'org-ref-glossary)
 
 
-;; org-element-citation-prefix-re is too aggressive, and end up fontifying [[cite:]] links.
-;; Here I add to the beginning so it does not match a bracketed link.
-;; Maybe this will get fixed in org-mode, and we can remove this.
-;; (setq org-element-citation-prefix-re (concat "\\(?:[^[]\\)" "\\[cite\\(?:/\\([/_[:alnum:]-]+\\)\\)?:[	\n ]*"))
-
-
 ;;* Custom variables
 
 (defgroup org-ref nil
   "Customization group for org-ref."
   :tag "Org Ref"
   :group 'org)
-
-
-(defcustom org-ref-completion-library
-  'org-ref-ivy
-  "Symbol for library to define completion functions.
-The completion library should provide functions for
-`org-ref-insert-link-function', `org-ref-insert-cite-function',
-`org-ref-insert-label-function', `org-ref-insert-ref-function',
-and `org-ref-cite-onclick-function', and set those variables to
-the values of those functions."
-  :type 'symbol
-  :options '(org-ref-ivy)
-  :group 'org-ref)
 
 
 (defcustom org-ref-insert-link-function
@@ -129,11 +113,26 @@ insert the ref link."
   nil
   "Function that runs when you click on a cite link.
 The function must take one argument which is the path of the link
-that was clicked on. This function is normally set by the
-function in `org-ref-completion-library'."
+that was clicked on."
   :type 'function
   :group 'org-ref)
 
+
+(defvar org-ref-prefix-arg nil
+  "Variable to store a prefix arg during completion.")
+
+
+(defun org-ref-minibuffer-prefix ()
+  "Hook function for `minibuffer-setup-hook'.
+The idea is to locally bind C-u to a function that captures
+prefix args in `org-ref-prefix-arg' so you can use them later."
+  (setq org-ref-prefix-arg nil)
+  (local-set-key (kbd "C-u") (lambda ()
+			       (interactive)
+			       (setq org-ref-prefix-arg
+				     (if (null org-ref-prefix-arg)
+					 '(4)
+				       (list (* 4 (car org-ref-prefix-arg))))))))
 
 
 ;; * Bibliography related functions
@@ -170,8 +169,11 @@ set in `bibtex-completion-bibliography'"
          (when org-ref-bibliography-files
            (throw 'result (nreverse (delete-dups (mapcar 'org-ref-get-bibfile-path org-ref-bibliography-files)))))
 
-         ;; we did not find anything. use defaults
-	 (throw 'result bibtex-completion-bibliography))))))
+         ;; we did not find anything. use defaults. Make sure we have a list in
+         ;; case it is a single string. 
+	 (throw 'result (if (listp bibtex-completion-bibliography)
+			    bibtex-completion-bibliography
+			  (list bibtex-completion-bibliography))))))))
 
 
 (defun org-ref-key-in-file-p (key filename)
@@ -236,27 +238,55 @@ provide their own version."
 "
   ("[" (funcall org-ref-insert-cite-function) "Citation" :column "org-ref")
   ("]" (funcall org-ref-insert-ref-function) "Cross-reference" :column "org-ref")
-  ("\\" (funcall org-ref-insert-label-function) "Label"  :column "org-ref"))
-
-
-(defhydra+ org-ref-insert-link-hydra ()
+  ("\\" (funcall org-ref-insert-label-function) "Label"  :column "org-ref")
+  
   ("bs" (insert (org-ref-bibliographystyle-complete-link)) "Bibliographystyle" :column "Bibliography" :color blue)
   ("bf" (insert (org-ref-bibliography-complete)) "Bibliography" :column "Bibliography" :color blue)
-  ("nb" (insert (org-ref-nobibliography-complete)) "Bibliography" :column "Bibliography" :color blue))
-
-
-(defhydra+ org-ref-insert-link-hydra ()
+  ("nb" (insert (org-ref-nobibliography-complete)) "Bibliography" :column "Bibliography" :color blue)
+  
   ("g" org-ref-insert-glossary-link "Glossary link" :column "Glossary" :color blue)
   ("a" org-ref-insert-acronym-link "Acronym link" :column "Glossary" :color blue)
-  ("ng" org-ref-add-glossary-entry "New glossary term" :column "Glossary")
-  ("na" org-ref-add-acronym-entry "New acronym term" :column "Glossary"))
-
-
-(defhydra+ org-ref-insert-link-hydra (:color blue)
+  ("ng" (progn
+	  (org-mark-ring-push)
+	  (goto-char (point-min))
+	  (if (re-search-forward "#\\+name: glossary" nil t)
+	      (progn
+		(goto-char (org-element-property :contents-end (org-element-context)))
+		(backward-char)
+		(org-table-insert-row '(4)))
+	    ;; no table found
+	    (goto-char (point-max))
+	    (insert "\n\n#+name: glossary
+| label | term    | definition                    |
+|-------+---------+-------------------------------|
+|       |         |                               |")
+	    (beginning-of-line)
+	    (forward-char)))
+   "New glossary term" :column "Glossary")
+  
+  ("na" (progn
+	  (org-mark-ring-push)
+	  (goto-char (point-min))
+	  (if (re-search-forward "#\\+name: acronym" nil t)
+	      (progn
+		(goto-char (org-element-property :contents-end (org-element-context)))
+		(backward-char)
+		(org-table-insert-row '(4)))
+	    ;; no table found
+	    (goto-char (point-max))
+	    (insert "\n\n#+name: acronyms
+| label | abbreviation | full form                  |
+|-------+--------------+----------------------------|
+|       |              |                            |")
+	    (beginning-of-line)
+	    (forward-char)))
+   "New acronym term" :column "Glossary")
+  
   ("t" (insert "[[list-of-tables:]]\n") "List of tables" :column "Misc")
   ("f" (insert "[[list-of-figures:]]\n") "List of figures" :column "Misc")
-  ("i" (insert (format "[[index:%s]]" (string-trim (completing-read "Index entry: ")))) "Index entry" :column "Misc")
-  ("p" (insert "[[printindex:]]") "Print index" :column "Misc"))
+  ("i" (insert (format "[[index:%s]]" (string-trim (read-string "Index entry: ")))) "Index entry" :column "Misc")
+  ("pi" (insert "[[printindex:]]") "Print index" :column "Misc")
+  ("pg" (insert "[[printglossaries:]]") "Print glossary" :column "Misc"))
 
 
 ;;* org-ref-help

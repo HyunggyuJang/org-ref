@@ -1,4 +1,4 @@
-;;; org-ref-natbib-bbl-citeproc.el --- A bibtex + natbib BBL-based citeproc
+;;; org-ref-natbib-bbl-citeproc.el --- A bibtex + natbib BBL-based citeproc -*- lexical-binding: t; -*-
 ;;
 ;; Copyright (C) 2021  John Kitchin
 
@@ -48,6 +48,7 @@
 ;;
 ;;; Code:
 
+(defvar org-ref-natmove)  			;silence compiler
 
 (defun org-bbl-clean-string (s)
   "Clean S of markups.
@@ -100,29 +101,29 @@ cover any math (yet)."
 		 (setq p4 (point)
 		       p3 (- (point) 1))
 		 (setq ss (string-trim (buffer-substring p2 p3)))
-		 (setf (buffer-substring p1 p4) (format fmt ss)))))
+		 (setf (buffer-substring p1 p4) (format fmt ss))))
 
-    ;; {text} for protecting case. This is tricky to do reliably. I try to check
-    ;; if this is not part of a command, and skip it if so. This leaves
-    ;; un-cleaned commands in, which is desirable to me so you can see if there
-    ;; are ones we might handle in the future.
-    (goto-char (point-min))
-    (while (search-forward "{" nil t)
-      ;; I think if we go back a word, and are then looking back at \\, we are in a command.
-      ;; this would fail on a latex command like \word-word{} but I can't think of any right now.
-      (save-excursion
-	(backward-word)
-	(setq cmd-p (looking-back "\\\\" 1)))
-      ;; This looks back for a \cmd, basically things not a closing }
-      (unless cmd-p
-	(setq p1 (match-beginning 0)
-	      p2 (point))
-	(backward-char)
-	(forward-list)
-	(setq p4 (point)
-	      p3 (- (point) 1))
-	(setq s (buffer-substring p2 p3))
-	(cl--set-buffer-substring p1 p4 s)))
+      ;; {text} for protecting case. This is tricky to do reliably. I try to check
+      ;; if this is not part of a command, and skip it if so. This leaves
+      ;; un-cleaned commands in, which is desirable to me so you can see if there
+      ;; are ones we might handle in the future.
+      (goto-char (point-min))
+      (while (search-forward "{" nil t)
+	;; I think if we go back a word, and are then looking back at \\, we are in a command.
+	;; this would fail on a latex command like \word-word{} but I can't think of any right now.
+	(save-excursion
+	  (backward-word)
+	  (setq cmd-p (looking-back "\\\\" 1)))
+	;; This looks back for a \cmd, basically things not a closing }
+	(unless cmd-p
+	  (setq p1 (match-beginning 0)
+		p2 (point))
+	  (backward-char)
+	  (forward-list)
+	  (setq p4 (point)
+		p3 (- (point) 1))
+	  (setq s (buffer-substring p2 p3))
+	  (cl--set-buffer-substring p1 p4 s))))
 
 
     (let ((result (buffer-string)))
@@ -154,11 +155,8 @@ done in a temp-buffer so we don't actually modify the bbl file."
     (insert (org-bbl-clean-string entry))
     (goto-char (point-min))
     (let (p1
-	  p2
-	  p3
-	  p4
-	  s
-	  author
+	  p2 
+	  authors
 	  blocks
 	  entry)
       (setq p1 (point))
@@ -320,10 +318,11 @@ Returns a plist (list bibitem-key :entry (org-ref-bbl-entry bibitem-entry)
 	       (_ (format "[[%s]]-[[%s]]" (cl-first group) (car (last group))))))))
 
 
-(defun org-ref-replace-cite-link (link bibdata NATBIB-OPTIONS)
+(defun org-ref-replace-cite-link (link bibdata NATBIB-OPTIONS backend)
   "NATBIB-OPTIONS is the string to options.
 Argument LINK is an org link for a citation.
-Argument BIBDATA the data parsed from a bbl file."
+Argument BIBDATA the data parsed from a bbl file.
+Argument BACKEND is the export format."
   (let* ((refs (plist-get (org-ref-parse-cite-path (org-element-property :path link)) :references))
 	 (keys (cl-loop for ref in refs collect (plist-get ref :key)))
 	 items replacements replacement joiner p1 p2)
@@ -348,9 +347,13 @@ Argument BIBDATA the data parsed from a bbl file."
      ((string-match-p "authoryear" NATBIB-OPTIONS)
       (setq replacements (cl-loop for key in keys
 				  collect
-				  (format "@@html:<a href=\"#%s\">%s</a>@@"
-					  (plist-get (cdr (assoc key bibdata)) :bracket-data)
-					  (plist-get (cdr (assoc key bibdata)) :bracket-data)))))
+				  (cond
+				   ((eq backend 'html)
+				    (format "@@html:<a href=\"#%s\">%s</a>@@"
+					    (plist-get (cdr (assoc key bibdata)) :bracket-data) 
+					    (plist-get (cdr (assoc key bibdata)) :bracket-data)))
+				   (t
+				    (format "[[%s]]" (plist-get (cdr (assoc key bibdata)) :bracket-data)))))))
      (t
       (error "%s not supported yet" NATBIB-OPTIONS)))
 
@@ -398,7 +401,8 @@ Argument BIBDATA the data parsed from a bbl file."
 
     (setq p2 (org-element-property :end link))
 
-    (when natmove
+    ;; org-ref-natmove is dynamically bound here
+    (when org-ref-natmove
       (save-excursion
 	(goto-char (org-element-property :end link))
 	(skip-chars-backward " ")
@@ -414,10 +418,11 @@ Argument BIBDATA the data parsed from a bbl file."
 	  (concat replacement (make-string (org-element-property :post-blank link) ? )))))
 
 
-(defun org-ref-bbl-replace-bibliography (bib-link bibdata NATBIB-OPTIONS)
+(defun org-ref-bbl-replace-bibliography (bib-link bibdata NATBIB-OPTIONS backend)
   "Get a replacement bibliography string for BIBDATA and NATBIB-OPTIONS.
 BIBDATA comes from `org-ref-bbl-bibliography-data'.
-Argument BIB-LINK an org link for a bibliography."
+Argument BIB-LINK an org link for a bibliography.
+Argument BACKEND is the export format."
   (cl--set-buffer-substring (org-element-property :begin bib-link)
 			    (org-element-property :end bib-link)
 			    (cond
@@ -437,10 +442,18 @@ Argument BIB-LINK an org link for a bibliography."
 			      (concat "\n* Bibliography\n\n"
 				      (string-join
 				       (cl-loop for entry in bibdata collect
-						(format "- @@html:<a id=\"%s\"></a>@@(%s) %s\n"
-							(plist-get (cdr entry) :bracket-data)
-							(plist-get (cdr entry) :bracket-data)
-							(plist-get (cdr entry) :entry)))
+						(cond
+						 ((eq backend 'html)
+						  (format "- @@html:<a id=\"%s\"></a>@@(%s) %s\n"
+							  (plist-get (cdr entry) :bracket-data)
+							  (plist-get (cdr entry) :bracket-data)
+							  (plist-get (cdr entry) :entry)))
+						 (t
+						  (format "- <<%s>> %s"
+							  (plist-get (cdr entry) :bracket-data)
+							  (plist-get (cdr entry) :entry)))))
+				       
+				       
 				       "\n")))
 			     (t
 			      (error "%s not supported yet" NATBIB-OPTIONS)))))
@@ -459,7 +472,7 @@ bibliography.
   (let* ((org-export-before-parsing-hook nil)
 	 (tex-file (org-latex-export-to-latex))
 	 (bbl-file (concat (file-name-sans-extension tex-file) ".bbl"))
-	 natbib-options bibdata natmove
+	 natbib-options bibdata org-ref-natmove
 	 buf)
 
     (when-let (buf (find-buffer-visiting tex-file))
@@ -477,7 +490,7 @@ bibliography.
       (goto-char (point-min))
       (setq natbib-options (org-ref-bbl-get-natbib-options))
       (goto-char (point-min))
-      (setq natmove (search-forward "\\usepackage{natmove}" nil t)))
+      (setq org-ref-natmove (search-forward "\\usepackage{natmove}" nil t)))
     (kill-buffer buf)
 
     (setq buf (find-file-noselect bbl-file))
@@ -488,7 +501,7 @@ bibliography.
 
     ;; Replace all the cite links
     (cl-loop for cl in (reverse (org-ref-get-cite-links)) do
-	     (org-ref-replace-cite-link cl bibdata natbib-options))
+	     (org-ref-replace-cite-link cl bibdata natbib-options backend))
 
     (org-ref-bbl-replace-bibliography
      (org-element-map (org-element-parse-buffer) 'link
@@ -497,7 +510,7 @@ bibliography.
 	   lnk))
        nil
        t)
-     bibdata natbib-options)))
+     bibdata natbib-options backend)))
 
 
 (provide 'org-ref-natbib-bbl-citeproc)

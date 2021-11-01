@@ -67,21 +67,10 @@
 (require 's)
 (require 'doi-utils)
 
-
-(declare-function key-chord-define-global "key-chord")
+(defvar bibtex-completion-bibliography)
+(declare-function bibtex-completion-show-entry "bibtex-completion")
 (declare-function org-ref-find-bibliography "org-ref-core")
-(declare-function org-ref-open-bibtex-pdf "org-ref-core")
-(declare-function org-ref-open-bibtex-notes "org-ref-core")
-(declare-function org-ref-clean-bibtex-entry "org-ref-core")
-(declare-function org-ref-open-in-browser "org-ref-core")
-(declare-function org-ref-sort-bibtex-entry "org-ref-core")
-(declare-function org-ref-build-full-bibliography "org-ref-core")
-(declare-function bibtex-completion-edit-notes "bibtex-completion")
-(declare-function bibtex-completion-get-value "bibtex-completion")
-(declare-function bibtex-completion-get-entry "bibtex-completion")
-(declare-function parsebib-find-next-item "parsebib")
-(declare-function parsebib-read-entry "parsebib")
-
+(declare-function org-element-property "org-element")
 
 ;;* Custom variables
 (defgroup org-ref-bibtex nil
@@ -113,6 +102,7 @@ The replacement string should be escaped for use with
 `replace-match'. Compare to the default value. Common choices
 would be to omit the space or to replace the space with a ~ for a
 non-breaking space."
+  :type 'regexp
   :group 'org-ref)
 
 
@@ -234,7 +224,9 @@ users may be interested in adding themselves."
   "Cons list of non-ascii characters and their LaTeX representations.
 This may be deprecated. When `org-ref' started, non-ascii
 characters were often problematic with bibtex, but in 2021, it is
-not obvious that is still try.")
+not obvious that is still try."
+  :type '(alist :key-type (string) :value-type (string))
+  :group 'org-ref-bibtex)
 
 (defcustom org-ref-bibtex-assoc-pdf-with-entry-move-function 'rename-file
   "Function to use when associating pdf files with bibtex entries.
@@ -353,6 +345,7 @@ original file in place while creating a renamed copy in some directory."
     ("WR" "Water Research" "Water Res."))
   "List of (string journal-full-name journal-abbreviation). Find
   new abbreviations at http://cassi.cas.org/search.jsp."
+  :type '(list (repeat (list string string)))
   :group 'org-ref-bibtex)
 
 
@@ -477,7 +470,9 @@ books."
     (bibtex-narrow-to-entry)
     (bibtex-beginning-of-entry)
     (let* ((entry-type (downcase (cdr (assoc "=type=" (bibtex-parse-entry)))))
-	   (fields (cdr (assoc entry-type org-ref-title-case-types))))
+	   (fields (cdr (assoc entry-type org-ref-title-case-types)))
+	   ;; temporary variables
+	   title words)
       (when fields
 	(cl-loop for field in fields
 		 when (bibtex-autokey-get-field field)
@@ -623,12 +618,16 @@ N is a prefix argument.  If it is numeric, jump that many entries back."
       (re-search-backward bibtex-entry-head nil t (and (numberp n) n))
     (bibtex-beginning-of-entry)))
 
+(declare-function avy-with "avy")
+(declare-function avy--style-fn "avy")
+(declare-function avy-process "avy")
+(defvar avy-style)
 
 ;;;###autoload
 (defun org-ref-bibtex-visible-entry ()
   "Jump to visible entry."
   (interactive)
-  (avy-with avy-goto-typo
+  (avy-with avy-ve
     (avy-process
      (save-excursion
        (goto-char (window-start))
@@ -643,7 +642,7 @@ N is a prefix argument.  If it is numeric, jump that many entries back."
 (defun org-ref-bibtex-visible-field ()
   "Jump to visible field."
   (interactive)
-  (avy-with avy-goto-typo
+  (avy-with avy-vf
     (avy-process
      (save-excursion
        (goto-char (window-start))
@@ -765,6 +764,10 @@ opposite function from that which is defined in
       'rename-file)))
 
 
+(defvar bibtex-completion-library-path)
+(declare-function bibtex-completion-find-pdf-in-library "bibtex-completion")
+
+
 ;;;###autoload
 (defun org-ref-bibtex-assoc-pdf-with-entry (&optional prefix)
   "Prompt for pdf associated with entry at point and rename it.
@@ -865,7 +868,10 @@ a directory. Optional PREFIX argument toggles between
 	   (kill-new (bibtex-key-in-head))))
    "Copy key" :column "Copy")
 
-  ("f" (kill-new (bibtex-completion-apa-format-reference (cdr (assoc "=key=" (bibtex-parse-entry t)))))
+  ("f" (save-excursion
+	 (bibtex-beginning-of-entry)
+	 (kill-new (bibtex-completion-apa-format-reference
+		    (cdr (assoc "=key=" (bibtex-parse-entry t))))))
    "Formatted entry" :column "Copy")
 
   ;; Navigation
@@ -885,6 +891,9 @@ a directory. Optional PREFIX argument toggles between
   ("q" nil))
 
 
+(declare-function biblio-lookup "biblio")
+(declare-function arxiv-add-bibtex-entry "org-ref-arxiv")
+(declare-function doi-insert-bibtex "doi-utils")
 
 ;;** Hydra menu for new bibtex entries
 ;; A hydra for adding new bibtex entries.
@@ -922,6 +931,7 @@ a directory. Optional PREFIX argument toggles between
 
 
 ;;* Email a bibtex entry
+(declare-function bibtex-completion-find-pdf "bibtex-completion")
 
 ;;;###autoload
 (defun org-ref-email-bibtex-entry ()
@@ -1003,6 +1013,7 @@ keywords.  Optional argument ARG prefix arg to replace keywords."
 
 
 ;; * Extract bibtex blocks from an org-file
+
 ;;;###autoload
 (defun org-ref-extract-bibtex-blocks (bibfile)
   "Extract all bibtex blocks in buffer to BIBFILE.
@@ -1035,6 +1046,8 @@ will clobber the file."
 
 
 ;;** create text citations from a bibtex entry
+(declare-function bibtex-completion-apa-format-reference "bibtex-completion")
+(declare-function bibtex-completion-get-key-bibtex "bibtex-completion")
 
 (defun org-ref-bib-citation ()
   "From a bibtex entry, create and return a lightly formatted citation string."
@@ -1042,6 +1055,7 @@ will clobber the file."
 
 
 ;;** Open pdf in bibtex entry
+(declare-function bibtex-completion-open-pdf "bibtex-completion")
 ;;;###autoload
 (defun org-ref-open-bibtex-pdf ()
   "Open pdf for a bibtex entry, if it exists."
@@ -1050,6 +1064,8 @@ will clobber the file."
 
 
 ;;** Open notes from bibtex entry
+(declare-function bibtex-completion-edit-notes "bibtex-completion")
+
 ;;;###autoload
 (defun org-ref-open-bibtex-notes ()
   "From a bibtex entry, open the notes if they exist."
@@ -1058,6 +1074,8 @@ will clobber the file."
 
 
 ;;** Open bibtex entry in browser
+(declare-function bibtex-completion-open-url-or-doi "bibtex-completion")
+
 ;;;###autoload
 (defun org-ref-open-in-browser ()
   "Open the bibtex entry at point in a browser using the url field or doi field."

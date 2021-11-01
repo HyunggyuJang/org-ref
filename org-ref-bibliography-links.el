@@ -33,7 +33,9 @@ some directory, absolute, etc."
 
 (defcustom org-ref-validate-bibliography nil
   "If non-nil, validate bibliography files in fontification.
-This can be slow, so we don't do it by default.")
+This can be slow, so we don't do it by default."
+  :type 'boolean
+  :group 'org-ref)
 
 
 ;;* bibliography* links
@@ -61,15 +63,17 @@ Argument BACKEND is the export backend."
    ((eq backend 'latex)
     (format "%s{%s}"
 	    cmd
-	    (replace-regexp-in-string
-	     "\\.bib" ""
-	     (mapconcat
-	      'identity
-	      (mapcar
-	       (lambda (f)
-		 (funcall org-ref-latex-bib-resolve-func (org-ref-get-bibfile-path f)))
-	       (split-string bibfiles ","))
-	      ","))))))
+	    (if (not (string= "" bibfiles)) 
+		(replace-regexp-in-string
+		 "\\.bib" ""
+		 (mapconcat
+		  'identity
+		  (mapcar
+		   (lambda (f)
+		     (funcall org-ref-latex-bib-resolve-func (org-ref-get-bibfile-path f)))
+		   (split-string bibfiles ","))
+		  ","))
+	      "")))))
 
 
 (defun org-ref-bibliography-activate (start end path _bracketp)
@@ -127,7 +131,10 @@ PATH is a comma-separated list of bibfiles."
 (defun org-ref-bibliography*-follow (_path)
   "Function to follow bibliography links."
   (interactive)
-  (find-file (org-ref-get-bibfile-path (get-text-property (point) 'org-ref-bibfile))))
+  (save-excursion
+    (unless (get-text-property (point) 'org-ref-bibfile)
+      (re-search-forward ":"))
+    (find-file (org-ref-get-bibfile-path (get-text-property (point) 'org-ref-bibfile)))))
 
 
 (defun org-ref-printbibliography-export (options _desc backend)
@@ -142,13 +149,20 @@ Optional argument BACKEND is the export backend."
 		(format "[%s]" options)
 	      "")))))
 
+(defvar org-ref-cite-types)
+(declare-function org-element-map "org-element")
+(declare-function org-element-property "org-element")
+(declare-function org-element-parse-buffer "org-element")
+(declare-function bibtex-completion-show-entry "bibtex-completion")
+(declare-function org-ref-possible-bibfiles "org-ref-core")
+(declare-function org-ref-parse-cite-path "org-ref-citation-links")
 
 (defun org-ref-insert-bibliography-link ()
   "Insert a bibliography link for the files used in this buffer."
   (interactive)
   (let* ((cite-links (org-element-map (org-element-parse-buffer) 'link
 		       (lambda (lnk)
-			 (when (member (org-element-property :type lnk) org-ref-cite-types)
+			 (when (assoc (org-element-property :type lnk) org-ref-cite-types)
 			   lnk))))
 	 (keys (delete-dups (cl-loop for cl in cite-links append
 				     (cl-loop for ref in (plist-get (org-ref-parse-cite-path
@@ -173,13 +187,15 @@ Optional argument BACKEND is the export backend."
 	  (completing-read "Bibliography file: " (org-ref-possible-bibfiles))))
 
 
+(defvar org-ref-default-citation-link)
+
 (defun org-ref-bibtex-store-link ()
   "Store a link from a bibtex file. Only supports the cite link.
 This essentially the same as the store link in org-bibtex, but it
 creates a cite link."
   (when (eq major-mode 'bibtex-mode)
     (let ((link (concat org-ref-default-citation-link
-			":@"
+			":&"
 			(save-excursion
                           (bibtex-beginning-of-entry)
 			  (cdr (assoc "=key=" (bibtex-parse-entry)))))))
@@ -196,7 +212,7 @@ creates a cite link."
 			 :help-echo "Bibliography link"
 			 :export (apply-partially 'org-ref-bibliography*-export "\\bibliography")
 			 :activate-func #'org-ref-bibliography-activate
-			 :face #'org-link)
+			 :face 'org-link)
 
 
 (org-link-set-parameters "nobibliography"
@@ -206,7 +222,17 @@ creates a cite link."
 			 :activate-func #'org-ref-bibliography-activate
 			 :follow #'org-ref-bibliography*-follow
 			 :export (apply-partially 'org-ref-bibliography*-export "\\nobibliography")
-			 :face #'org-link)
+			 :face 'org-link)
+
+
+(org-link-set-parameters "nobibliography*"
+			 :complete #'org-ref-nobibliography-complete
+			 :store #'org-ref-bibtex-store-link
+			 :help-echo "No bibliography link"
+			 :activate-func #'org-ref-bibliography-activate
+			 :follow #'org-ref-bibliography*-follow
+			 :export (apply-partially 'org-ref-bibliography*-export "\\nobibliography*")
+			 :face 'org-link)
 
 
 (org-link-set-parameters "printbibliography"

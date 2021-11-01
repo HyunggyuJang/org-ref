@@ -1,10 +1,10 @@
-#+title: A basic example of org-ref for csl export
+#+title: A basic example of org-ref for csl export with absolute path
 #+options: toc:nil
 
 These keywords specify the style for citations.
 
 # this file must exist be a path or exist in `org-cite-csl-styles-dir'.
-#+csl-style: apa-5th-edition.csl
+#+csl-style: /Users/jkitchin/Dropbox/emacs/scimax/org-ref/citeproc/csl-styles/apa-numeric-superscript-brackets.csl
 
 # this must be a locales file in `org-cite-csl-locales-dir'. Defaults to en-US
 #+csl-locale: en-US
@@ -13,6 +13,8 @@ These keywords specify the style for citations.
 * Introduction
 
 Let's see how these get rendered.
+
+** Default
 
 - cite :: Effective data sharing [[cite:&kitchin-2015-examp]].
 
@@ -118,9 +120,7 @@ If you want a standalone, bibtex free LaTeX/PDF export you can use
 
 If you want a more <<fine-tuned export>>, it would look like this. Here, if you want to use natmove, you use it first, before the cites are replaced by csl. Using refproc is what gives the cleveref links their cleverness.
 
-** HTML
-
-#+BEGIN_SRC emacs-lisp :results silent
+#+BEGIN_SRC emacs-lisp
 (require 'org-ref-refproc)
 (let ((org-export-before-parsing-hook '(org-ref-cite-natmove ;; do this first
 					org-ref-csl-preprocess-buffer
@@ -128,23 +128,4 @@ If you want a more <<fine-tuned export>>, it would look like this. Here, if you 
   (org-open-file (org-html-export-to-html)))
 #+END_SRC
 
-
-** OpenDocument
-
-#+BEGIN_SRC emacs-lisp :results silent
-(let ((org-export-before-parsing-hook '(org-ref-cite-natmove ;; do this first
-					org-ref-csl-preprocess-buffer
-					org-ref-refproc)))
-  (org-open-file (org-odt-export-to-odt) 'system))
-#+END_SRC
-
-
-** MS Word (docx) via pandoc
-
-#+BEGIN_SRC emacs-lisp :results silent
-(require 'org-ref-refproc)
-(let ((org-export-before-parsing-hook '(org-ref-cite-natmove ;; do this first
-					org-ref-csl-preprocess-buffer
-					org-ref-refproc)))
-  (org-open-file (plist-get (org-pandoc-export-to-docx) 'output-file) 'system))
-#+END_SRC
+#+RESULTS:

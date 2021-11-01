@@ -1,4 +1,4 @@
-;;; org-ref-misc-links.el --- Miscellaneous links
+;;; org-ref-misc-links.el --- Miscellaneous links -*- lexical-binding: t; -*-
 ;;
 ;; Copyright (C) 2021  John Kitchin
 
@@ -29,7 +29,7 @@
 ;;** List of figures
 
 ;;;###autoload
-(defun org-ref-list-of-figures (&optional arg)
+(defun org-ref-list-of-figures (&optional _arg)
   "Generate buffer with list of figures in them.
 ARG does nothing.
 Ignore figures in COMMENTED sections."
@@ -88,14 +88,14 @@ Ignore figures in COMMENTED sections."
 
 (org-link-set-parameters "list-of-figures"
 			 :follow #'org-ref-list-of-figures
-			 :export (lambda (keyword desc format)
+			 :export (lambda (_path _desc format)
 				   (cond
 				    ((eq format 'latex)
 				     (format "\\listoffigures")))))
 
 ;;** List of tables
 ;;;###autoload
-(defun org-ref-list-of-tables (&optional arg)
+(defun org-ref-list-of-tables (&optional _arg)
   "Generate a buffer with a list of tables.
 ARG does nothing."
   (interactive)
@@ -145,17 +145,22 @@ ARG does nothing."
 
 (org-link-set-parameters "list-of-tables"
 			 :follow #'org-ref-list-of-tables
-			 :export (lambda (keyword desc format)
+			 :export (lambda (_path _desc format)
 				   (cond
 				    ((eq format 'latex)
 				     (format "\\listoftables")))))
 
 
 ;;* Index link
+;;
+;; You need these lines in the header
+;; 
+;; #+latex_header: \usepackage{makeidx}
+;; #+latex_header: \makeindex
 (org-link-set-parameters "index"
 			 :follow (lambda (path)
 				   (occur path))
-			 :export (lambda (path desc format)
+			 :export (lambda (path _desc format)
 				   (cond
 				    ((eq format 'latex)
 				     (format "\\index{%s}" path)))))
@@ -163,7 +168,7 @@ ARG does nothing."
 
 ;; this will generate a temporary index of entries in the file when clicked on.
 ;;;###autoload
-(defun org-ref-index (&optional path)
+(defun org-ref-index (&optional _path)
   "Open an *index* buffer with links to index entries.
 PATH is required for the org-link, but it does nothing here."
   (interactive)
@@ -173,8 +178,7 @@ PATH is required for the org-link, but it does nothing here."
     ;; get links
     (org-element-map (org-ref-parse-buffer) 'link
       (lambda (link)
-	(let ((type (nth 0 link))
-	      (plist (nth 1 link)))
+	(let ((plist (nth 1 link)))
 
 	  (when (equal (plist-get plist ':type) "index")
 	    (add-to-list
@@ -203,7 +207,9 @@ PATH is required for the org-link, but it does nothing here."
 
     ;; now separate out into chunks first letters
     (dolist (link *index-links*)
-      (add-to-list '*initial-letters* (substring (car link) 0 1) t))
+      (push (substring (car link) 0 1) *initial-letters*))
+
+    (setq *initial-letters* (reverse *initial-letters*))
 
     ;; now create the index
     (switch-to-buffer (get-buffer-create "*index*"))
@@ -223,10 +229,71 @@ PATH is required for the org-link, but it does nothing here."
 
 (org-link-set-parameters "printindex"
 			 :follow #'org-ref-index
-			 :export (lambda (path desc format)
+			 :export (lambda (_path _desc format)
 				   (cond
 				    ((eq format 'latex)
 				     (format "\\printindex")))))
+
+
+(defun org-ref-idxproc (_backend)
+  "Preprocess index entries.
+Each entry is replaced by a radio target. The printindex is
+replaced by links to them."
+  (let* ((index-links (reverse (org-element-map (org-element-parse-buffer) 'link
+				 (lambda (lnk)
+				   (when (string= "index" (org-element-property :type lnk))
+				     lnk)))))
+	 (sorted-groups (seq-sort-by
+			 (lambda (x)
+			   "Alphabetically sort groups"
+			   (car x))
+			 #'string-lessp
+			 (seq-group-by
+			  (lambda (lnk)
+			    (org-element-property :path lnk))
+			  index-links)))
+	 (link-replacements '()))
+
+    ;; Sort within each group
+    (cl-loop for (key . links) in sorted-groups do
+	     (setf (cdr (assoc key sorted-groups))
+		   (sort links (lambda (a b)
+				 (< (org-element-property :begin a)
+				    (org-element-property :begin b))))))
+    
+    ;; Compute replacements for each index link.
+    (cl-loop for (key . links) in sorted-groups do
+	     (cl-loop for i from 0 for lnk in links do
+		      (cl-pushnew (cons
+				   (org-element-property :begin lnk)
+				   (format "<<%s-%s>>" key i))
+				  link-replacements)))
+
+    (cl-loop for il in index-links collect
+	     (setf (buffer-substring (org-element-property :begin il)
+				     (org-element-property :end il))
+		   (cdr (assoc (org-element-property :begin il) link-replacements))))
+
+    ;; Now we replace the printindex link
+    (org-element-map (org-element-parse-buffer) 'link
+      (lambda (lnk)
+	(when (string= "printindex" (org-element-property :type lnk))
+	  (setf (buffer-substring (org-element-property :begin lnk)
+				  (org-element-property :end lnk))
+		(format "*Index*\n\n%s"
+			(string-join
+			 (cl-loop for (key . links) in sorted-groups collect
+				  (format "%s: %s"
+					  key
+					  (string-join 
+					   (cl-loop for i from 0 for lnk in links collect
+						    (format "[[%s-%s][%s-%s]] "
+							    (org-element-property :path lnk)
+							    i
+							    (org-element-property :path lnk)
+							    i))
+					   ", ")))
+			 "\n\n"))))))))
 
 
 (provide 'org-ref-misc-links)

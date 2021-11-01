@@ -1,4 +1,4 @@
-;;; org-ref-label-link.el ---
+;;; org-ref-label-link.el --- -*- lexical-binding: t; -*-
 ;;
 ;; Copyright (C) 2021  John Kitchin
 
@@ -26,7 +26,8 @@
 
 (defface org-ref-label-face
   `((t (:inherit org-link :foreground "dark magenta")))
-  "Color for ref links in `org-ref'.")
+  "Color for ref links in `org-ref'."
+  :group 'org-ref-faces)
 
 
 ;;** label link (maybe deprecated)
@@ -34,10 +35,10 @@
 
 (org-link-set-parameters
  "label"
- :export (lambda (keyword desc format)
+ :export (lambda (path _desc format)
 	   (cond
 	    ((eq format 'latex)
-	     (format "\\label{%s}" keyword))))
+	     (format "\\label{%s}" path))))
  :face 'org-ref-label-face
  :help-echo "A label")
 

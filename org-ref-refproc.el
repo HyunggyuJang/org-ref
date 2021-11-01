@@ -1,4 +1,4 @@
-;;; org-ref-refproc.el --- refproc - for exporting ref links in non-LaTeX backends
+;;; org-ref-refproc.el --- refproc - for exporting ref links in non-LaTeX backends -*- lexical-binding: t; -*-
 
 ;; For autoref and cref* links, a clever prefix is added at export.
 ;; Prefixes are found in `org-ref-refproc-clever-prefixes'
@@ -11,16 +11,23 @@
 ;;
 
 ;;; Code:
+(require 'org-ref-ref-links)
+
 
 (defcustom org-ref-refproc-clever-prefixes
-  '((section :full "section" :abbrv "sec.")
-    (equation :full "equation" :abbrv "eq.")
-    (proof :full "proof" :abbrv "pf.")
-    (table :full "table" :abbrv "tab.")
-    (figure :full "figure" :abbrv "fig.")
-    (listing :full "listing" :abbrv "lst."))
+  '((section :full "section" :abbrv "sec." :org-element headline)
+    (figure :full "figure" :abbrv "fig." :org-element link)
+    (table :full "table" :abbrv "tab." :org-element table)
+    (equation :full "equation" :abbrv "eq." :org-element latex-environment)
+    (proof :full "proof" :abbrv "pf." :org-element latex-environment)
+    (listing :full "listing" :abbrv "lst." :org-element src-block)
+    (lemma :full "lemma" :abbrv "lem." :org-element special-block)
+    (theorem :full "theorem" :abbrv "thm." :org-element special-block)
+    (corollary :full "corollary" :abbrv "cor." :org-element special-block))
   "Prefixes for cleveref links.
-plist with :full and :abbrv forms for each type."
+plist with :full and :abbrv forms for each type.
+:org-element is the element these are defined in."
+  :type 'sexp
   :group 'org-ref)
 
 
@@ -44,9 +51,8 @@ These options only affect the cref* links."
   "Return a list of ref links in the buffer."
   (org-element-map (org-element-parse-buffer) 'link
     (lambda (lnk)
-      (when (member (org-element-property :type lnk) org-ref-ref-types)
+      (when (assoc (org-element-property :type lnk) org-ref-ref-types)
 	lnk))))
-
 
 
 (defun org-ref-refproc-referenceables ()
@@ -59,13 +65,12 @@ and latex_environments with a latex label or name (these are all
 considered equations, which might be wrong for other
 environments)."
   (let* ((parse-data (org-element-parse-buffer))
+	 type el
 	 ;; for each type, we specify what org-element to get the labels from.
-	 (referencables (cl-loop for (type . el) in '((section . headline)
-						      (figure . link)
-						      (table . table)
-						      (equation . latex-environment)
-						      (listing . src-block)
-						      (proof . latex-environment))
+	 (referencables (cl-loop for entry in org-ref-refproc-clever-prefixes
+				 do
+				 (setq type (car entry)
+				       el (plist-get (cdr entry) :org-element))
 				 collect
 				 (cons type
 				       (org-element-map parse-data el
@@ -78,10 +83,12 @@ environments)."
 					       ((org-element-property :CUSTOM_ID e)
 						(org-element-property :CUSTOM_ID e))
 					       ;; See if there is a target in the heading
-					       ((string-match org-target-regexp (org-element-property :raw-value e))
+					       ((string-match org-target-regexp
+							      (org-element-property :raw-value e))
 						(match-string 1 (org-element-property :raw-value e)))
 					       ;; Check for a label link
-					       ((string-match (concat "label:" org-ref-label-re) (org-element-property :raw-value e))
+					       ((string-match (concat "label:" org-ref-label-re)
+							      (org-element-property :raw-value e))
 						(match-string 1 (org-element-property :raw-value e)))))
 
 					     ;;  Figures
@@ -89,19 +96,24 @@ environments)."
 					      (cond
 					       ;; file link with a name property
 					       ((and (org-file-image-p (org-element-property :path e))
-						     (org-element-property :name (org-element-property :parent e)))
-						(org-element-property :name (org-element-property :parent e)))
+						     (org-element-property
+						      :name (org-element-property :parent e)))
+						(org-element-property
+						 :name (org-element-property :parent e)))
 					       ;; a label link in the caption
 					       ((and  (org-file-image-p (org-element-property :path e))
-						      (org-element-property :caption (org-element-property :parent e))
+						      (org-element-property
+						       :caption (org-element-property :parent e))
 
 						      (string-match (concat "label:" org-ref-label-re)
 								    (org-element-interpret-data
-								     (org-element-property :caption
-											   (org-element-property :parent e)))))
+								     (org-element-property
+								      :caption
+								      (org-element-property :parent e)))))
 						(match-string 1 (org-element-interpret-data
-								 (org-element-property :caption
-										       (org-element-property :parent e)))))))
+								 (org-element-property
+								  :caption
+								  (org-element-property :parent e)))))))
 
 					     ;; Tables
 					     ('table
@@ -133,6 +145,24 @@ environments)."
 						 ;; latex label in the value
 						 ((string-match "\\\\label{\\(.*\\)}" (org-element-property :value e))
 						  (match-string 1 (org-element-property :value e))))))
+
+					     ;; special blocks
+					     ('special-block
+					      (cond
+					       ((and (eq type 'lemma)
+						     (org-element-property :name e)
+						     (string= "lemma" (org-element-property :type e)))
+						(org-element-property :name e))
+					       
+					       ((and (eq type 'corollary)
+						     (org-element-property :name e)
+						     (string= "corollary" (org-element-property :type e)))
+						(org-element-property :name e))
+
+					       ((and (eq type 'theorem)
+						     (org-element-property :name e)
+						     (string= "theorem" (org-element-property :type e)))
+						(org-element-property :name e))))
 
 
 					     ;; Listings of code blocks
@@ -185,7 +215,6 @@ grouping and sorting here."
 REFERENCEABLES comes from `org-ref-refproc-referenceables'.
 BACKEND is the export backend."
   (let* ((ref-type (org-element-property :type ref-link))
-	 (path (org-element-property :path ref-link))
 	 (labels (split-string (org-element-property :path ref-link) ","))
 	 (post-blanks (org-element-property :post-blank ref-link))
 	 (data (cl-loop for label in labels collect (org-ref-refproc-get-type label referenceables))))
@@ -314,7 +343,6 @@ which capitalizes each prefix."
   (let* ((options (org-ref-refproc-get-options))
 	 ;; I guess I know this will be cref or Cref here.
 	 ;; (ref-type (org-element-property :type ref-link))
-	 (path (org-element-property :path ref-link))
 	 (labels (split-string (org-element-property :path ref-link) ","))
 	 (post-blanks (org-element-property :post-blank ref-link))
 	 (data (cl-loop for label in labels collect (org-ref-refproc-get-type label referenceables)))
@@ -327,6 +355,7 @@ which capitalizes each prefix."
 						     (< (plist-get a :index) (plist-get b :index))))))
 	 ;; temp vars
 	 prefix
+	 prefix-data
 	 ;; Now we have to be clever on each sorted group. One day I should add compression to the groups, e.g. 1,2,3 - > 1 to 3
 	 ;; For each group we need a prefix, and it may have to be a plural prefix.
 	 ;; If there are two members of a group, they are joined by and
@@ -425,11 +454,8 @@ which capitalizes each prefix."
 BACKEND is the
 Meant to be used in an `org-export-before-parsing-hook' on a copy
 of the buffer."
-  ;; (font-lock-fontify-buffer)
-  (let ((options (org-ref-refproc-get-options))
-	(ref-links (org-ref-get-ref-links))
+  (let ((ref-links (org-ref-get-ref-links))
 	(referenceables (org-ref-refproc-referenceables)))
-
 
     (cl-loop for ref in (reverse ref-links) do
 	     (cl--set-buffer-substring (org-element-property :begin ref)

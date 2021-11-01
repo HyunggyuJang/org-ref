@@ -1,7 +1,6 @@
 *.elc
 /.cask/
 /.projectile
-sandbox
 /.DS_Store
 .DS_Store
 /tests/.test-org-id-locations
@@ -39,3 +38,10 @@ elpa-for-orgref
 meta.xml
 styles.xml
 *.run.xml
+/sandbox/
+*.dvi
+*.docx
+*.pyg
+/.ipynb_checkpoints/
+/examples/ltximg/
+/melpa/sandbox/

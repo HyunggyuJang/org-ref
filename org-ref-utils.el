@@ -22,12 +22,14 @@
 
 ;;
 
-(eval-when-compile
-  (require 'cl-lib))
+(eval-when-compile (require 'cl-lib))
 
 (require 'org)
+(eval-and-compile (require 'org-macs))
+
 
 (defvar org-ref-cite-types)
+(defvar pdftotext-executable)
 
 (declare-function 'org-ref-get-bibtex-key-and-file "org-ref-core.el")
 (declare-function 'org-ref-find-bibliography "org-ref-core.el")
@@ -107,24 +109,40 @@ Opens https://github.com/jkitchin/org-ref/issues/new."
 ${org-ref-version}
 
 * System
-system-type: ${system}
-system-configuration: ${system-configuration}
-window system: ${window-system}
-Emacs: ${emacs-version}
-org-version: ${org-version}
+
+- system-type :: ${system}
+- system-configuration :: ${system-configuration}
+- window system :: ${window-system}
+- Emacs :: ${emacs-version}
+- org-version :: ${org-version}
 
 * about org-ref
-org-ref installed in ${org-ref-location}.
 
-* org-ref-pdf (loaded: ${org-ref-pdf-p})
-system pdftotext: ${pdftotext}
-You set pdftotext-executable to ${pdftotext-executable} (exists: ${pdftotext-executable-p})
+org-ref installed in [[${org-ref-location}]].
 
-* org-ref-url-utils (loaded: ${org-ref-url-p})
+* org-ref setup
+
+-  org-ref-insert-link-function :: ${org-ref-insert-link-function}
+-  org-ref-insert-cite-function :: ${org-ref-insert-cite-function}
+-  org-ref-insert-label-function :: ${org-ref-insert-label-function}
+-  org-ref-insert-ref-function :: ${org-ref-insert-ref-function}
+-  org-ref-cite-onclick-function :: ${org-ref-cite-onclick-function}
+
+* org-ref libraries
+
+** org-ref-helm (loaded: ${org-ref-helm-p})
+** org-ref-ivy  (loaded: ${org-ref-ivy-p})
+** org-ref-pdf (loaded: ${org-ref-pdf-p})
+
+- system pdftotext :: ${pdftotext}
+
+You set =pdftotext-executable= to ${pdftotext-executable} (exists: ${pdftotext-executable-p})
+
+** org-ref-url-utils (loaded: ${org-ref-url-p})
 
 * export variables
-org-latex-pdf-process:
-${org-latex-pdf-process}
+
+- org-latex-pdf-process :: ${org-latex-pdf-process}
 "
 	     'aget
 	     `(("org-ref-version" . ,(org-ref-version))
@@ -138,18 +156,26 @@ ${org-latex-pdf-process}
 	       ("org-version" . ,(org-version))
 
 	       ("org-ref-pdf-p" . ,(ords (featurep 'org-ref-pdf)))
+	       ("org-ref-helm-p" . ,(ords (featurep 'org-ref-helm)))
+	       ("org-ref-ivy-p" . ,(ords (featurep 'org-ref-ivy)))
+
 	       ("pdftotext" . ,(ords (if (featurep 'org-ref-pdf)
 					 (executable-find "pdftotext")
 				       "org-ref-pdf not loaded")))
 	       ("pdftotext-executable" . ,(ords (if (featurep 'org-ref-pdf)
 						    pdftotext-executable
 						  "org-ref-pdf not loaded")))
-	       ("pdftotext-executable-p" . ,(ords (if (featurep 'org-ref-pdf)
+	       ("pdftotext-executable-p" . ,(ords (if (boundp 'pdftotext-executable)
 						      (or
 						       (executable-find pdftotext-executable)
 						       (file-exists-p pdftotext-executable))
-						    "org-ref-pdf not loaded")))
-	       ("org-ref-url-p" . ,(ords (featurep 'org-ref-url)))))))
+						    "pdftotext-executable is not bound")))
+	       ("org-ref-url-p" . ,(ords (featurep 'org-ref-url)))
+	       ("org-ref-insert-link-function" . ,org-ref-insert-link-function)
+	       ("org-ref-insert-cite-function" . ,org-ref-insert-cite-function)
+	       ("org-ref-insert-label-function" . ,org-ref-insert-label-function)
+	       ("org-ref-insert-ref-function" . ,org-ref-insert-ref-function)
+	       ("org-ref-cite-onclick-function" . ,org-ref-cite-onclick-function)))))
 
 
 (defun org-ref-get-bibtex-entry-citation (key)
@@ -187,26 +213,24 @@ Falls back to `org-ref-get-pdf-filename' if file field does not exist.
 Contributed by https://github.com/autosquid.
 Argument KEY is the bibtex key."
   (let* ((results (org-ref-get-bibtex-key-and-file key))
-         (bibfile (cdr results))
-
-         entry)
+         (bibfile (cdr results)))
     (with-temp-buffer
       (insert-file-contents bibfile)
       (bibtex-set-dialect (parsebib-find-bibtex-dialect) t)
       (bibtex-search-entry key nil 0)
-      (let ((e (bibtex-autokey-get-field "file"))))
-      (if (> (length e) 4)
-          (let ((clean-field (replace-regexp-in-string "{\\|}\\|\\\\" "" e)))
-            (let ((first-file (car (split-string clean-field ";" t))))
-              (format "/%s" (substring first-file 1
-				       (- (length first-file) 4)))))
-        (expand-file-name (format "%s.pdf" key) (cond
-						 ((stringp bibtex-completion-library-path)
-						  bibtex-completion-library-path)
-						 ((= 1 (length bibtex-completion-library-path))
-						  (car bibtex-completion-library-path))
-						 (t
-						  (completing-read "PDF dir: " bibtex-completion-library-path))))))))
+      (let ((e (bibtex-autokey-get-field "file")))
+	(if (> (length e) 4)
+            (let ((clean-field (replace-regexp-in-string "{\\|}\\|\\\\" "" e)))
+              (let ((first-file (car (split-string clean-field ";" t))))
+		(format "/%s" (substring first-file 1
+					 (- (length first-file) 4)))))
+          (expand-file-name (format "%s.pdf" key) (cond
+						   ((stringp bibtex-completion-library-path)
+						    bibtex-completion-library-path)
+						   ((= 1 (length bibtex-completion-library-path))
+						    (car bibtex-completion-library-path))
+						   (t
+						    (completing-read "PDF dir: " bibtex-completion-library-path)))))))))
 
 
 (defun org-ref-get-pdf-filename-bibtex-completion (key)
@@ -223,26 +247,25 @@ Jabref, Mendeley and Zotero. See `bibtex-completion-find-pdf'."
 (defun org-ref-open-pdf-at-point ()
   "Open the pdf for bibtex key under point if it exists."
   (interactive)
-  (let* ((results (org-ref-get-bibtex-key-and-file))
+  (let* ((bibtex-completion-bibliography (org-ref-find-bibliography))
+	 (results (org-ref-get-bibtex-key-and-file))
          (key (car results))
-         (pdf-file (concat (cond
-			    ((stringp bibtex-completion-library-path)
-			     bibtex-completion-library-path)
-			    ((= 1 (length bibtex-completion-library-path))
-			     (car bibtex-completion-library-path))
-			    (t
-			     (completing-read "Dir: " bibtex-completion-library-path)))
-			   key ".pdf")))
-    (if (file-exists-p pdf-file)
-        (org-open-file pdf-file)
-      (message "no pdf found for %s" key))))
+         (pdf-file (bibtex-completion-find-pdf key t)))
+    (pcase (length pdf-file)
+      (0
+       (message "no pdf found for %s" key))
+      (1
+       (org-open-file (car pdf-file)))
+      (_
+       (org-open-file (completing-read "pdf: " pdf-file))))))
 
 
 ;;;###autoload
 (defun org-ref-open-url-at-point ()
   "Open the url for bibtex key under point."
   (interactive)
-  (let* ((results (org-ref-get-bibtex-key-and-file))
+  (let* ((bibtex-completion-bibliography (org-ref-find-bibliography))
+	 (results (org-ref-get-bibtex-key-and-file))
          (key (car results))
          (bibfile (cdr results)))
     (save-excursion
@@ -271,6 +294,7 @@ Jabref, Mendeley and Zotero. See `bibtex-completion-find-pdf'."
   "Open the notes for bibtex key under point in a cite link in a buffer.
 Can also be called with THEKEY in a program."
   (interactive)
+  (org-mark-ring-push)
   (when (null thekey)
     (setq thekey (org-ref-get-bibtex-key-under-cursor)))
   (let ((bibtex-completion-bibliography (org-ref-find-bibliography)))
@@ -281,6 +305,7 @@ Can also be called with THEKEY in a program."
 (defun org-ref-open-citation-at-point ()
   "Open bibtex file to key at point."
   (interactive)
+  (org-mark-ring-push)
   (let ((bibtex-completion-bibliography (org-ref-find-bibliography)))
     (bibtex-completion-show-entry (list (org-ref-get-bibtex-key-under-cursor)))))
 
@@ -414,7 +439,7 @@ Use SORT to specify alphabetical order by key."
     (org-element-map (org-element-parse-buffer) 'link
       (lambda (link)
         (let ((plist (nth 1 link)))
-          (when (-contains? org-ref-cite-types (plist-get plist ':type))
+          (when (assoc (plist-get plist ':type) org-ref-cite-types)
 	    (setq keys (append keys (cl-loop for ref in
 					     (plist-get (org-ref-parse-cite-path
 							 (org-element-property :path link))
@@ -501,6 +526,8 @@ if FORCE is non-nil reparse the buffer no matter what."
 
 ;;** bad citations, labels, refs and files in orgfile
 ;;  These are used i
+(defvar bibtex-files)
+(defvar bibtex-file-path)
 (defun org-ref-bad-cite-candidates ()
   "Return a list of conses (key . marker) where key does not exist in the known bibliography files, and marker points to the key."
   (let* ((cp (point))			; save to return to later
@@ -518,14 +545,14 @@ if FORCE is non-nil reparse the buffer no matter what."
     (org-element-map (org-ref-parse-buffer) 'link
       (lambda (link)
         (let ((plist (nth 1 link)))
-          (when (-contains? org-ref-cite-types (plist-get plist :type))
+          (when (assoc (plist-get plist :type) org-ref-cite-types)
 	    (when (not (string= "*" (plist-get plist :path)))
 	      (cl-loop for ref in (plist-get (org-ref-parse-cite-path (plist-get plist :path)) :references)
 		       do
 		       (when (not (member (plist-get ref :key) bibtex-keys))
 			 (goto-char (plist-get plist :begin))
-			 (re-search-forward key)
-			 (push (cons key (point-marker)) bad-citations)))))))
+			 (re-search-forward (plist-get ref :key))
+			 (push (cons (plist-get ref :key) (point-marker)) bad-citations)))))))
       ;; add with-affiliates to get cites in caption
       nil nil nil t)
     (goto-char cp)
@@ -543,7 +570,7 @@ if FORCE is non-nil reparse the buffer no matter what."
     (org-element-map (org-ref-parse-buffer) 'link
       (lambda (link)
         (let ((plist (nth 1 link)))
-	  (when (member (plist-get plist ':type)  org-ref-ref-types)
+	  (when (assoc (plist-get plist ':type)  org-ref-ref-types)
 	    (cl-loop for label in (split-string (plist-get plist :path) ",")
 		     do
 		     (unless (-contains? labels label)
@@ -558,15 +585,11 @@ if FORCE is non-nil reparse the buffer no matter what."
 (defun org-ref-count-labels (label)
   "Return the number of times LABEL appears in the buffer."
   (let ((rx (string-join org-ref-ref-label-regexps "\\|"))
-	(labels '())
-	context)
+	(labels '()))
     (save-excursion
       (org-with-wide-buffer
        (goto-char (point-min))
        (while (re-search-forward rx nil t)
-	 (setq context (buffer-substring
-			(save-excursion (forward-line -1) (point))
-			(save-excursion (forward-line +2) (point))))
 	 (cl-pushnew (match-string-no-properties 1) labels))))
     (-count (lambda (x) (and (stringp x) (string= x label))) labels)))
 
@@ -641,7 +664,7 @@ if FORCE is non-nil reparse the buffer no matter what."
       (goto-char (point-min))
       (while (re-search-forward "\\\\attachfile{\\([^}]*\\)}" nil t)
         (unless (file-exists-p (match-string 1))
-          (add-to-list 'bad-files (cons (match-string 1) (point-marker))))))
+          (push  (cons (match-string 1) (point-marker)) bad-files))))
     bad-files))
 
 
@@ -719,6 +742,9 @@ if FORCE is non-nil reparse the buffer no matter what."
 	 (org-latex-prefer-user-labels (and (boundp 'org-latex-prefer-user-labels)
 					    org-latex-prefer-user-labels)))
 
+    (when elc-ok nil)  		; this is to silence a compiler error
+					; about elc-ok not being used. I use it
+					; as a side-effect above
 
     ;; See if natbib, biblatex or cleveref are required
     (org-element-map (org-element-parse-buffer) 'link
@@ -959,6 +985,11 @@ if FORCE is non-nil reparse the buffer no matter what."
 		 (insert (format "- [[elisp:(progn (switch-to-buffer %S) (goto-char %S)(org-show-entry))][%s]]\n"
 				 mbuffer mchar key))))
 
+      (when bad-files
+	(insert "\n* Bad files\n")
+	(cl-loop for (fname pos) in bad-files do
+		 (insert (format "- [[elisp:(goto-char %s)][%s]]\n" pos fname))))
+
       (when unreferenced-labels
 	(insert "\n* Unreferenced label links\n")
 	(cl-loop for (key . marker) in unreferenced-labels
@@ -988,7 +1019,6 @@ if FORCE is non-nil reparse the buffer no matter what."
 								 (file-name-sans-extension
 								  (locate-library "org-ref"))
 								 ".el"))
-			  ,(format "completion backend = %s" org-ref-completion-library)
 			  ,(format "org-ref-insert-cite-function = %s" org-ref-insert-cite-function)
 			  ,(format "org-ref-insert-label-function = %s" org-ref-insert-label-function)
 			  ,(format "org-ref-insert-ref-function = %s" org-ref-insert-ref-function)

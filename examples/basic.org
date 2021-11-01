@@ -18,9 +18,9 @@ This is a basic example. The section uses a target label. The next section (Sec.
 index:citations
 
 Here are a few typical
-- cite :: [[cite:@kitchin-2015-examp-effec]]
-- citeauthor ::  [[citeauthor:@kitchin-2015-examp-effec]]
-- citenum ::  [[citenum:@kitchin-2015-examp-effec]]
+- cite :: [[cite:&kitchin-2015-examp-effec]]
+- citeauthor ::  [[citeauthor:&kitchin-2015-examp-effec]]
+- citenum ::  [[citenum:&kitchin-2015-examp-effec]]
 
 index:label!table
 #+name: tab-data
@@ -70,8 +70,6 @@ You can also put several together  Cref:sec-intro,tab-data,fig-cos,eq-int
 
 And for numerically sequential sequences, they will be collapsed when compiled to a range: cref:sec-cr,sec-misc,sec-citations. How this is done is customized in LaTeX, see the =cleveref= documentation.
 
-[[bibliographystyle:authordate1]]
-bibliography:/Users/jkitchin/Dropbox/emacs/bibliography/references.bib
 
 ** miscellaneous links <<sec-misc>>
 
@@ -81,5 +79,16 @@ bibliography:/Users/jkitchin/Dropbox/emacs/bibliography/references.bib
 
 [[printindex:]]
 
-bibliographystyle:unsrtnat
-bibliography:../org-ref.bib
+[[bibliographystyle:authordate1]]
+bibliography:/Users/jkitchin/Dropbox/emacs/bibliography/references.bib
+
+
+* build                                                            :noexport:
+
+** PDF
+
+org-ref was designed for making PDFs via LaTeX. It should just work with a regular export mechanism. For this document your `org-latex-pdf-process' must run bibtex and makeindex.
+
+[[elisp:(org-open-file (org-latex-export-to-pdf))]]
+
+This document has many features that are not compatible with other formats (e.g. the list of tables, index, etc...). See [[./basic-csl.org]] for an example that works with other formats.
