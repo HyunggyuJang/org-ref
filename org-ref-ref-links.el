@@ -22,7 +22,9 @@
 ;;
 
 ;;; Code:
-(eval-and-compile (require 'org-macs))
+(eval-when-compile
+  (require 'org-macs)
+  (require 'subr-x))
 
 (defcustom org-ref-default-ref-type "ref"
   "Default ref link type to use when inserting ref links"
