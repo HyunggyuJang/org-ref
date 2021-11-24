@@ -23,7 +23,7 @@
 
 ;;; Code:
 (eval-when-compile
-  (require 'org-macs)
+  (require 'org)
   (require 'subr-x))
 
 (defcustom org-ref-default-ref-type "ref"
