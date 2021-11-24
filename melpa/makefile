@@ -15,3 +15,9 @@ ivy29:
 
 helm:
 	${EMACS} -q -Q -l init-helm.el test-1.org
+
+.PHONY: melpa
+
+melpa:
+	mkdir /home/runner/.emacs.d
+	${EMACS} --batch -l melpa/init-melpa.el

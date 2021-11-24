@@ -50,6 +50,7 @@
 
 (require 'hydra)
 (require 'xref)
+(eval-when-compile (require 'subr-x))
 
 (defgroup org-ref-faces nil
   "A group for faces in `org-ref'."
@@ -208,7 +209,7 @@ This is mostly for multicites and natbib."
    org-ref-biblatex-types
    org-ref-biblatex-multitypes
    ;; for the bibentry package
-   '("bibentry" "Insert the bibtex entry"))
+   '(("bibentry" "Insert the bibtex entry")))
   "List of citation types known in `org-ref'."
   :type '(repeat :tag "List of citation types (type description)" (list string string))
   :group 'org-ref)
@@ -346,18 +347,43 @@ to a path string."
 (defvar bibtex-completion-bibliography)
 (defvar bibtex-completion-display-formats-internal)
 
+;; (defun org-ref-valid-keys ()
+;;   "Return a list of valid bibtex keys for this buffer.
+;; This is used a lot in `org-ref-cite-activate' so it needs to be
+;; fast, but also up to date."
+;;   ;; this seems to be needed, but we don't want to do this every time
+;;   (unless bibtex-completion-display-formats-internal
+;;     (bibtex-completion-init))
+
+;;   (let ((bibtex-completion-bibliography (org-ref-find-bibliography)))
+;;     (cl-loop for entry in (bibtex-completion-candidates)
+;; 	     collect
+;; 	     (cdr (assoc "=key=" (cdr entry))))))
+
+
 (defun org-ref-valid-keys ()
   "Return a list of valid bibtex keys for this buffer.
 This is used a lot in `org-ref-cite-activate' so it needs to be
 fast, but also up to date."
+  
   ;; this seems to be needed, but we don't want to do this every time
   (unless bibtex-completion-display-formats-internal
     (bibtex-completion-init))
-  
-  (let ((bibtex-completion-bibliography (org-ref-find-bibliography)))
-    (cl-loop for entry in (bibtex-completion-candidates)
-	     collect
-	     (cdr (assoc "=key=" (cdr entry))))))
+
+  (let ((files (org-ref-find-bibliography)))
+    (if (seq-every-p 'identity (cl-loop for file in files
+					collect (assoc file bibtex-completion-cache)))
+	;; We have a cache for each file
+	(cl-loop for entry in 
+		 (cl-loop
+		  for file in files
+		  append (cddr (assoc file bibtex-completion-cache)))
+		 collect (cdr (assoc "=key=" (cdr entry))))
+      ;; you need to get a cache
+      (let ((bibtex-completion-bibliography files))
+	(cl-loop for entry in (bibtex-completion-candidates)
+		 collect
+		 (cdr (assoc "=key=" (cdr entry))))))))
 
 
 (defun org-ref-cite-activate (start end path _bracketp)
@@ -498,6 +524,7 @@ PATH has the citations in it."
   ("t" org-ref-change-cite-type "Change cite type" :column "Edit")
   ("d" org-ref-delete-citation-at-point "Delete at point" :column "Edit")
   ("r" org-ref-replace-citation-at-point "Replace cite" :column "Edit")
+  ("P" org-ref-edit-pre-post-notes "Edit pre/suffix" :column "Edit")
 
   ;; Navigation
   ("[" org-ref-previous-key "Previous key" :column "Navigation" :color red)
@@ -627,13 +654,24 @@ Use with apply-partially."
 					 ""))
 				     ;; Multiple references
 				     (cond
+				      ;; this is a common suffix
 				      ((plist-get cite :suffix)
 				       (format "[%s]" (string-trim (plist-get cite :suffix))))
 				      ;; last reference has a suffix
 				      ((plist-get (car (last references)) :suffix)
 				       (format "[%s]" (string-trim (plist-get (car (last references)) :suffix))))
 				      (t
-				       ""))))
+				       ;; If there is a prefix, then this should
+				       ;; be an empty bracket, and if not it
+				       ;; should am empty string. You need an
+				       ;; empty bracket, at least for biblatex
+				       ;; commands. With just one set of
+				       ;; brackets it is interpreted as a
+				       ;; suffix.
+				       (if (or (plist-get cite :prefix)
+					       (plist-get (car references) :prefix))
+					   "[]"
+					 "")))))
 		      ("keys" . ,(string-join keys ","))))))))))
 
 
@@ -794,6 +832,77 @@ Use with apply-partially."
 	  (re-search-forward link-string)
 	  (replace-match (org-ref-interpret-cite-data data)))
 	(goto-char cp)))))
+
+
+;;;###autoload
+(defun org-ref-edit-pre-post-notes (&optional common)
+  "Edit the pre/post notes at point.
+
+if you are not on a key, or with optional prefix
+arg COMMON, edit the common prefixes instead."
+  (interactive "P")
+  ;; find out what the point is on.
+  (let* ((key (get-text-property (point) 'cite-key))
+	 (cp (point))
+	 (cite (org-element-context))
+	 (type (org-element-property :type cite))
+	 (data (org-ref-parse-cite-path (org-element-property :path cite)))
+	 prefix suffix
+	 (delta 0))
+    
+    (if (or (null key) common)
+	(progn
+	  (setq prefix (read-string "prenote: " (plist-get data :prefix))
+		suffix (read-string "postnote: " (plist-get data :suffix))
+		delta (- (length (plist-get data :prefix)) (length prefix)))
+
+	  (plist-put data :prefix (if (string= "" prefix)
+				      nil prefix))
+	  
+	  (plist-put data :suffix (if (string= "" suffix)
+				      nil suffix)))
+
+      ;; On a key
+      (let ((index (seq-position (plist-get data :references)
+				 key
+				 (lambda (el1 key-at-point)
+				   (string= key-at-point (plist-get el1 :key))))))
+	;; Pad with spaces after prefix and before suffix
+	(setq prefix (concat 
+		      (read-string "prenote: "
+				   (string-trim
+				    (plist-get
+				     (nth index (plist-get data :references))
+				     :prefix)))
+		      " ")
+	      suffix (concat " "
+			     (read-string "postnote: "
+					  (string-trim
+					   (plist-get
+					    (nth index (plist-get data :references))
+					    :suffix))))
+	      delta (- (length (plist-get
+				(nth index (plist-get data :references))
+				:prefix))
+		       (length prefix)))
+	(plist-put
+	 (nth index (plist-get data :references))
+	 :prefix (if (string= "" prefix)
+		     nil prefix))
+	
+	(plist-put
+	 (nth index (plist-get data :references))
+	 :suffix (if (string= "" suffix)
+		     nil suffix))))
+    
+    
+    (setf (buffer-substring (org-element-property :begin cite) (org-element-property :end cite))
+	  (format "[[%s:%s]]" type (org-ref-interpret-cite-data data)))
+
+    ;; This doesn't exactly save the point. I need a fancier calculation for
+    ;; that I think that accounts for the change due to the prefix change. e.g.
+    ;; you might add or subtract from the prefix.
+    (goto-char (- cp delta))))
 
 
 (declare-function org-element-create "org-element")
