@@ -22,9 +22,8 @@
 ;;
 
 ;;; Code:
-(eval-when-compile
-  (require 'org)
-  (require 'subr-x))
+(require 'org)
+(require 'subr-x)
 
 (defcustom org-ref-default-ref-type "ref"
   "Default ref link type to use when inserting ref links"
